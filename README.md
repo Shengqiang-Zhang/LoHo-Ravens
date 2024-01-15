@@ -4,6 +4,10 @@ This repository is based on the minibatch training enabled CLIPort
 repository [CLIPort-Batchify](https://github.com/ChenWu98/cliport-batchify).
 The video and homepage of this project are available at [this website](https://cisnlp.github.io/lohoravens-webpage/).
 
+Warnings: I'm currently refactoring the code and write documentation for this repo. Feel free to provide feedback to me.
+Thanks for your patience to explore this code repo.
+
+
 ## Installation (overriding the original repo)
 
 1. Create environment:
