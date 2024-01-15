@@ -1,0 +1,53 @@
+# Evaluation
+
+defaults:
+  - config
+
+hydra:
+  run:
+    dir: ${root_dir}
+
+mode: val # 'val' or 'test'
+
+# eval settings
+agent: cliport
+n_demos: 100 # number of val instances
+train_demos: 1000 # training demos used to train model
+n_repeats: 1 # number of repeats
+gpu: [ 0 ]
+save_results: True # write results to json
+update_results: False # overwrite existing json results?
+checkpoint_type: 'val_missing'
+val_on_heldout: True
+
+disp: False
+shared_memory: False
+eval_task: packing-boxes-pairs-seen-colors # task to evaluate the model on
+model_task: ${eval_task} # task the model was trained on (e.g. multi-language-conditioned or packing-boxes-pairs-seen-colors)
+type: single # 'single' or 'multi'
+
+# paths
+#model_dir: ${root_dir}
+model_dir: /mounts/work/shengqiang/projects/2023/cliport/
+exp_folder: exps
+data_dir: ${root_dir}/data
+assets_root: ${root_dir}/cliport/environments/assets/
+
+#model_path: ${model_dir}/${exp_folder}/${model_task}-${agent}-n${train_demos}-train-batchify/gpu${train.gpu}-bs${train.batch_size}-lr${train.lr}/checkpoints/ # path to pre-trained models
+#train_config: ${model_dir}/${exp_folder}/${model_task}-${agent}-n${train_demos}-train-batchify/gpu${train.gpu}-bs${train.batch_size}-lr${train.lr}/.hydra/config.yaml # path to train config
+#save_path: ${model_dir}/${exp_folder}/${eval_task}-${agent}-n${train_demos}-train-batchify/gpu${train.gpu}-bs${train.batch_size}-lr${train.lr}checkpoints/ # path to save results
+#results_path: ${model_dir}/${exp_folder}/${eval_task}-${agent}-n${train_demos}-train-batchify/gpu${train.gpu}-bs${train.batch_size}-lr${train.lr}/checkpoints/ # path to existing results
+model_path: ${model_dir}/checkpoints/
+train_config: ${model_dir}/.hydra/config.yaml
+save_path: ${model_dir}/checkpoints/
+results_path: ${model_dir}/checkpoints/
+
+
+# record videos (super slow)
+record:
+  save_video: False
+  save_video_path: ${model_dir}/videos/
+  add_text: True
+  fps: 20
+  video_height: 640
+  video_width: 720
