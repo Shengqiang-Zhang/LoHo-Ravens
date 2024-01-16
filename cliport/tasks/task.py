@@ -19,6 +19,7 @@ from cliport.utils import utils
 
 from pathlib import Path
 
+
 class Task:
     """Base Task class."""
 
@@ -141,8 +142,6 @@ class Task:
 
             # Unpack next goal step.
             objs, matches, targs, replace, rotations, _, _, _ = self.goals[0]
-            pick_obj_names, place_obj_names = self.pick_obj_names[0], self.place_obj_names[0]
-
 
             # Match objects to targets without replacement.
             if not replace:
@@ -209,10 +208,12 @@ class Task:
                 return
 
             if self.generate_instruction_for_every_step:
+                pick_obj_names, place_obj_names = self.pick_obj_names[0], self.place_obj_names[0]
                 step_instruction = "pick up the {pick_obj} and place it on the {place_obj}."
                 step_instruction = step_instruction.format(pick_obj=pick_obj_names[pick_i],
                                                            place_obj=place_obj_names[nn_targets[pick_i]])
-                instruction_save_name = f"{self.step_save_path}/{self.task_name}/{self.mode}/{self.seed}/{len(self.goals)}_{pick_i}.txt"
+                instruction_save_name = (f"{self.step_save_path}/{self.task_name}/{self.mode}/{self.seed}/"
+                                         f"{len(self.goals)}_{pick_i}.txt")
                 if not Path(instruction_save_name).parent.exists():
                     Path(instruction_save_name).parent.mkdir(parents=True, exist_ok=True)
                 with Path(instruction_save_name).open("w") as f:
@@ -220,7 +221,8 @@ class Task:
 
                 # Save an image before execution.
                 color = env.render()
-                img_save_name = f"{self.step_save_path}/{self.task_name}/{self.mode}/{self.seed}/{len(self.goals)}_{pick_i}.png"
+                img_save_name = (f"{self.step_save_path}/{self.task_name}/{self.mode}/{self.seed}/"
+                                 f"{len(self.goals)}_{pick_i}.png")
                 plt.imsave(img_save_name, color)
 
             # Get picking pose.
@@ -228,8 +230,7 @@ class Task:
             pick_pix = utils.sample_distribution(pick_prob)
             # For "deterministic" demonstrations on insertion-easy, use this:
             # pick_pix = (160,80)
-            pick_pos = utils.pix_to_xyz(pick_pix, hmap,
-                                        self.bounds, self.pix_size)
+            pick_pos = utils.pix_to_xyz(pick_pix, hmap, self.bounds, self.pix_size)
             pick_pose = (np.asarray(pick_pos), np.asarray((0, 0, 0, 1)))
 
             # Get placing pose.
