@@ -5,10 +5,12 @@ from typing import Union, List, Dict, Any
 
 import openai
 import torch
+import transformers
 from openai.error import RateLimitError, APIConnectionError, InvalidRequestError, APIError
 from transformers import AutoModelForCausalLM, AutoTokenizer, TextStreamer
 
-OPEN_SOURCE_LLMs = ["meta-llama/Llama-2-70b-hf",
+OPEN_SOURCE_LLMs = ["meta-llama/Meta-Llama-3-8B-Instruct",
+                    "meta-llama/Llama-2-70b-hf",
                     "upstage/Llama-2-70b-instruct-v2",
                     "meta-llama/Llama-2-13b-chat-hf",
                     "meta-llama/Llama-2-7b-chat-hf"]
@@ -95,9 +97,10 @@ def get_llm_general_prompt() -> (str, str, str):
                 "### Assistant:\n"
                 f"2. Pick up the gray block and+place it on the green zone. " +
                 f"<Done>\n")
-    system_prompt = ("You are a helpful assistant that can help the embodied agent " +
-                     "make plans for a high-level human instruction and " +
-                     "decompose the high-level human instruction into low-level executable instructions.")
+    system_prompt = ("You are a helpful assistant that can help the embodied agent "
+                     "make plans for a high-level human instruction and "
+                     "decompose the high-level human instruction into "
+                     "low-level executable instructions.")
 
     return please_help, examples, system_prompt
 
@@ -123,7 +126,11 @@ def get_task_llm_prompt_for_next_step(
             user_prompt_content += f"Now, given the observation '{observation_state}'."
         user_prompt_content += f"{complete_task_instruction}"
 
-        if llm_name.lower() in ["chatgpt", "gpt-3.5-turbo"]:
+        if (
+                llm_name.lower() in ["chatgpt", "gpt-3.5-turbo"]
+                or
+                "llama-3" in llm_name.lower()
+        ):
             system_prompt = {
                 "role": "system",
                 "content": system_prompt_content
@@ -156,10 +163,12 @@ def get_task_llm_prompt_for_next_step(
                 user_prompt_content += f"Last step action execution state is: {success_state}. "
             user_prompt_content += (
                     f"The final task instruction is {task_instruction}. " +
-                    "Based on the above information, you should plan the next step instruction for the robot. " +
+                    "Based on the above information, "
+                    "you should plan the next step instruction for the robot. " +
                     "If the last step instruction is executed unsuccessfully, " +
                     "you should repeat the last step instruction." +
-                    "Note that your answer can only contain one sentence and should also follow the format of " +
+                    "Note that your answer can only contain one sentence and "
+                    "should also follow the format of " +
                     "'Pick up the [object1] and place it on the [object2]'. " +
                     "You should clearly indicate the color of each object like " +
                     "'Pick up the yellow block and place it in the yellow bowl'." +
@@ -181,8 +190,11 @@ def get_task_llm_prompt_for_next_step(
         #         "If the task is finished, just output <Done>. " +
         #         "So, what's your next step plan?"
         # )
-
-        if llm_name.lower() in ["chatgpt", "gpt-3.5-turbo"]:
+        if (
+                llm_name.lower() in ["chatgpt", "gpt-3.5-turbo"]
+                or
+                "llama-3" in llm_name.lower()
+        ):
             user_prompt = {
                 "role": "user",
                 "content": user_prompt_content
@@ -239,7 +251,7 @@ def parse_gpt_output(plan: Dict[str, str]) -> List[str]:
     return new_plans
 
 
-def parse_opensource_llm_output(llm_output: str) -> List[str]:
+def parse_opensource_llm_output(llm_output: str, llm_name: str = "RealAI") -> List[str]:
     """Remove the prompts from llm output
 
     LLM output example:
@@ -262,7 +274,10 @@ def parse_opensource_llm_output(llm_output: str) -> List[str]:
     10. Pick up the purple block and place it on the purple bowl.
     11. Pick up the yellow block and place it on the yellow bowl. <Done>
     """
-    llm_response = llm_output.split("### Assistant:\n")[-1]
+    if "llama-3" in llm_name.lower():
+        llm_response = llm_output
+    else:
+        llm_response = llm_output.split("### Assistant:\n")[-1]
     plans = llm_response.split("\n")
     # remove the prefix of each step and suffix
     new_plans = []
@@ -364,6 +379,41 @@ def get_next_step_plan_from_llm(
         next_plans = get_next_step_plan_from_gpt_planner(task_instruction, gpt_cfg)
         next_plan = next_plans[0]
         prompt = gpt_cfg["prompt_text"]
+    elif "llama-3" in llm_name.lower():
+        model_id = llm_name
+        pipeline = transformers.pipeline(
+            "text-generation",
+            model=model_id,
+            model_kwargs={"torch_dtype": torch.bfloat16},
+            device_map="auto",
+        )
+
+        prompt = get_task_llm_prompt_for_next_step(
+            task_instruction,
+            feedback,
+            is_at_start,
+            message_history,
+            llm_name
+        )
+
+        terminators = [
+            pipeline.tokenizer.eos_token_id,
+            pipeline.tokenizer.convert_tokens_to_ids("<|eot_id|>")
+        ]
+
+        outputs = pipeline(
+            prompt,
+            max_new_tokens=256,
+            eos_token_id=terminators,
+            do_sample=True,
+            temperature=0.6,
+            top_p=0.9,
+        )
+        decoded_output = outputs[0]["generated_text"][-1]
+        print("Original decoded output is: ", decoded_output)
+        next_plans = parse_opensource_llm_output(decoded_output)
+        print("After parsing: ", next_plans)
+        next_plan = next_plans[0]
     elif llm_name in OPEN_SOURCE_LLMs:
         tokenizer, model, streamer = llm_args["tokenizer"], llm_args["model"], llm_args["streamer"]
 
@@ -398,7 +448,11 @@ def get_next_step_plan_from_llm(
 
 
 def update_message_history_with_next_plan(message_history, next_plan, llm_name):
-    if llm_name.lower() in ["chatgpt", "gpt-3.5-turbo"]:
+    if (
+            llm_name.lower() in ["chatgpt", "gpt-3.5-turbo"]
+            or
+            "llama-3" in llm_name.lower()
+    ):
         message_history.append({"role": "system", "content": next_plan})
     elif llm_name in OPEN_SOURCE_LLMs:
         message_history += f"{next_plan}\n\n"

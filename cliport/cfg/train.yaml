@@ -25,6 +25,7 @@ train:
 
   # task configs
   task: packing-boxes-pairs-seen-colors
+  task_difficulty_level: easy
   agent: two_stream_full_clip_lingunet_lat_transporter
   n_demos: 1000
   n_steps: 601000 # use 601000 for multi-task models

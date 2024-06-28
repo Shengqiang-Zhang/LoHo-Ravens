@@ -38,8 +38,9 @@ class RavensDataset(Dataset):
         self.n_demos = n_demos
         self.augment = augment
 
-        self.aug_theta_sigma = self.cfg['dataset']['augment']['theta_sigma'] if 'augment' in self.cfg[
-            'dataset'] else 60  # legacy code issue: theta_sigma was newly added
+        self.aug_theta_sigma = self.cfg['dataset']['augment']['theta_sigma'] if (
+                'augment' in self.cfg['dataset']
+        ) else 60  # legacy code issue: theta_sigma was newly added
         self.pix_size = 0.003125
         self.in_shape = (320, 160, 6)
         self.cam_config = cameras.RealSenseD415.CONFIG
@@ -60,10 +61,12 @@ class RavensDataset(Dataset):
             self.images = self.cfg['dataset']['images']
             self.cache = self.cfg['dataset']['cache']
 
-            # Check if there sufficient demos in the dataset
+            # Check if there are sufficient demos in the dataset
             if self.n_demos > self.n_episodes:
                 raise Exception(
-                    f"Requested training on {self.n_demos} demos, but only {self.n_episodes} demos exist in the dataset path: {self._path}.")
+                    f"Requested training on {self.n_demos} demos, "
+                    f"but only {self.n_episodes} demos exist in the dataset path: {self._path}."
+                )
 
             episodes = np.random.choice(range(self.n_episodes), self.n_demos, False)
             self.set(episodes)
@@ -204,7 +207,8 @@ class RavensDataset(Dataset):
 
         # Data augmentation.
         if augment:
-            img, _, (p0, p1), perturb_params = utils.perturb(img, [p0, p1], theta_sigma=self.aug_theta_sigma)
+            img, _, (p0, p1), perturb_params = utils.perturb(img, [p0, p1],
+                                                             theta_sigma=self.aug_theta_sigma)
 
         attn_label, transport_label = None, None
         if act:
@@ -213,8 +217,12 @@ class RavensDataset(Dataset):
 
         sample = {
             'img': torch.from_numpy(img).to(dtype=torch.float),
-            'p0': torch.from_numpy(p0.copy()) if p0 is not None else None, 'p0_theta': p0_theta,  # TODO: batch
-            'p1': torch.from_numpy(p1.copy()) if p1 is not None else None, 'p1_theta': p1_theta,  # TODO: batch
+            'p0': torch.from_numpy(p0.copy()) if p0 is not None else None,
+            'p0_theta': p0_theta,
+            # TODO: batch
+            'p1': torch.from_numpy(p1.copy()) if p1 is not None else None,
+            'p1_theta': p1_theta,
+            # TODO: batch
             'attn_label': attn_label,
             'transport_label': transport_label,
             'perturb_params': perturb_params
@@ -469,6 +477,21 @@ class RavensMultiTaskDataset(RavensDataset):
                 'towers-of-hanoi-seq-unseen-colors',
             ],
         },
+        'pick-and-place-primitive': {
+            'train': ['pick-and-place-primitive'],
+            'val': ['pick-and-place-primitive'],
+            'test': ['pick-and-place-primitive'],
+        },
+        'pick-and-place-primitive-with-size': {
+            'train': ['pick-and-place-primitive-with-size'],
+            'val': ['pick-and-place-primitive-with-size'],
+            'test': ['pick-and-place-primitive-with-size'],
+        },
+        'pick-and-place-primitive-with-absolute-position': {
+            'train': ['pick-and-place-primitive-with-absolute-position'],
+            'val': ['pick-and-place-primitive-with-absolute-position'],
+            'test': ['pick-and-place-primitive-with-absolute-position'],
+        },
 
         'lohoravens-pick-and-place-primitive': {
             'train': [
@@ -494,54 +517,102 @@ class RavensMultiTaskDataset(RavensDataset):
                 'pick-and-place-primitive',
                 'pick-and-place-primitive-with-absolute-position',
                 'pick-and-place-primitive-with-size',
-                'put-block-in-matching-bowl',
-                'stack-block-in-absolute-area',
-                'stack-smaller-over-bigger-with-same-color',
-                'put-even-block-in-same-color-zone',
+                'stack-all-blocks-on-a-zone',
+                'stack-all-blocks-on-a-zone-with-details',
+                'stack-blocks-of-same-color',
+                'stack-blocks-by-color',
+                'stack-blocks-of-same-size',
+                'stack-blocks-by-color-and-size',
+                'stack-blocks-by-relative-position-and-color',
+                'stack-blocks-by-absolute-position-and-color-in-size-order',
+                'move-blocks-between-absolute-positions',
+                'move-blocks-between-absolute-positions-by-size',
+                'put-block-into-mismatching-bowl',
+                'put-blocks-into-matching-bowls-with-details',
+                'put-hidden-block-into-matching-bowl',
+                'put-hidden-blocks-in-two-layer-towers-into-matching-bowls'
+
             ],
             'val': [
                 'pick-and-place-primitive',
                 'pick-and-place-primitive-with-absolute-position',
                 'pick-and-place-primitive-with-size',
-                'put-block-in-matching-bowl',
-                'stack-block-in-absolute-area',
-                'stack-smaller-over-bigger-with-same-color',
-                'put-even-block-in-same-color-zone',
+                'stack-all-blocks-on-a-zone',
+                'stack-all-blocks-on-a-zone-with-details',
+                'stack-blocks-of-same-color',
+                'stack-blocks-by-color',
+                'stack-blocks-of-same-size',
+                'stack-blocks-by-color-and-size',
+                'stack-blocks-by-relative-position-and-color',
+                'stack-blocks-by-absolute-position-and-color-in-size-order',
+                'move-blocks-between-absolute-positions',
+                'move-blocks-between-absolute-positions-by-size',
+                'put-block-into-mismatching-bowl',
+                'put-blocks-into-matching-bowls-with-details',
+                'put-hidden-block-into-matching-bowl',
+                'put-hidden-blocks-in-two-layer-towers-into-matching-bowls'
             ],
             'test': [
                 'pick-and-place-primitive',
                 'pick-and-place-primitive-with-absolute-position',
                 'pick-and-place-primitive-with-size',
-                'put-block-in-matching-bowl',
-                'stack-block-in-absolute-area',
-                'stack-smaller-over-bigger-with-same-color',
-                'put-even-block-in-same-color-zone',
+                'stack-all-blocks-on-a-zone',
+                'stack-all-blocks-on-a-zone-with-details',
+                'stack-blocks-of-same-color',
+                'stack-blocks-by-color',
+                'stack-blocks-of-same-size',
+                'stack-blocks-by-color-and-size',
+                'stack-blocks-by-relative-position-and-color',
+                'stack-blocks-by-absolute-position-and-color-in-size-order',
+                'move-blocks-between-absolute-positions',
+                'move-blocks-between-absolute-positions-by-size',
+                'put-block-into-mismatching-bowl',
+                'put-blocks-into-matching-bowls-with-details',
+                'put-hidden-block-into-matching-bowl',
+                'put-hidden-blocks-in-two-layer-towers-into-matching-bowls'
             ]
         },
         'lohoravens-cliport-unseen-tasks': {
             'train': [
-                'put-block-in-mismatching-bowl',
-                'stack-block-of-same-size',
-                'stack-block-with-alternate-color',
+                'stack-blocks-with-alternate-color',
+                'stack-blocks-by-color-in-size-order',
+                'stack-smaller-over-bigger-with-same-color',
                 'stack-smaller-over-bigger-with-same-color-in-same-color-zone',
-                'move-block-in-x-area-to-y-area',
-                'stack-block-of-same-color'
+                'stack-blocks-by-relative-position-and-color-and-size',
+                'stack-blocks-by-absolute-position-and-color-and-size',
+                'move-blocks-between-absolute-positions-by-size-and-color',
+                'put-hidden-blocks-in-three-layer-towers-into-matching-bowls',
+                'put-hidden-blocks-in-pyramid-into-matching-bowls',
             ],
             'val': [
-                'put-block-in-mismatching-bowl',
-                'stack-block-of-same-size',
-                'stack-block-with-alternate-color',
+                'stack-blocks-with-alternate-color',
+                'stack-blocks-by-color-in-size-order',
+                'stack-smaller-over-bigger-with-same-color',
                 'stack-smaller-over-bigger-with-same-color-in-same-color-zone',
-                'move-block-in-x-area-to-y-area',
-                'stack-block-of-same-color'
+                'stack-blocks-by-relative-position-and-color-and-size',
+                'stack-blocks-by-absolute-position-and-color-and-size',
+                'move-blocks-between-absolute-positions-by-size-and-color',
+                'put-hidden-blocks-in-three-layer-towers-into-matching-bowls',
+                'put-hidden-blocks-in-pyramid-into-matching-bowls',
             ],
             'test': [
-                'put-block-in-mismatching-bowl',
-                'stack-block-of-same-size',
-                'stack-block-with-alternate-color',
+                'stack-blocks-with-alternate-color',
+                'stack-blocks-by-color-in-size-order',
+                'stack-smaller-over-bigger-with-same-color',
                 'stack-smaller-over-bigger-with-same-color-in-same-color-zone',
-                'move-block-in-x-area-to-y-area',
-                'stack-block-of-same-color'
+                'stack-blocks-by-relative-position-and-color-and-size',
+                'stack-blocks-by-absolute-position-and-color-and-size',
+                'move-blocks-between-absolute-positions-by-size-and-color',
+                'put-hidden-blocks-in-three-layer-towers-into-matching-bowls',
+                'put-hidden-blocks-in-pyramid-into-matching-bowls',
+            ]
+        },
+        'lohoravens-reference-reasoning-tasks': {
+            'val': [
+                'stack-block-of-same-color',
+            ],
+            'test': [
+                'stack-block-of-same-color',
             ]
         },
 
@@ -764,14 +835,28 @@ class RavensMultiTaskDataset(RavensDataset):
 
     }
 
+    for t in MULTI_TASKS["lohoravens-cliport-seen-tasks"]["train"]:
+        MULTI_TASKS[t] = {
+            'train': [t],
+            'val': [t],
+            'test': [t]
+        }
+    for t in MULTI_TASKS["lohoravens-cliport-unseen-tasks"]["train"]:
+        MULTI_TASKS[t] = {
+            'train': [t],
+            'val': [t],
+            'test': [t]
+        }
+
     def __init__(self, path, cfg, group='multi-all',
                  mode='train', n_demos=100, augment=False):
         """A multi-task dataset."""
         self.root_path = path
         self.mode = mode
         self.tasks = self.MULTI_TASKS[group][mode]
-        self.attr_train_task = self.MULTI_TASKS[group]['attr_train_task'] if 'attr_train_task' in self.MULTI_TASKS[
-            group] else None
+        self.attr_train_task = self.MULTI_TASKS[group]['attr_train_task'] if 'attr_train_task' in \
+                                                                             self.MULTI_TASKS[
+                                                                                 group] else None
 
         self.cfg = cfg
         self.sample_set = {}
@@ -782,8 +867,9 @@ class RavensMultiTaskDataset(RavensDataset):
         self.n_demos = n_demos
         self.augment = augment
 
-        self.aug_theta_sigma = self.cfg['dataset']['augment']['theta_sigma'] if 'augment' in self.cfg[
-            'dataset'] else 60  # legacy code issue: theta_sigma was newly added
+        self.aug_theta_sigma = self.cfg['dataset']['augment']['theta_sigma'] if 'augment' in \
+                                                                                self.cfg[
+                                                                                    'dataset'] else 60  # legacy code issue: theta_sigma was newly added
         self.pix_size = 0.003125
         self.in_shape = (320, 160, 6)
         self.cam_config = cameras.RealSenseD415.CONFIG
@@ -803,10 +889,12 @@ class RavensMultiTaskDataset(RavensDataset):
             self.n_episodes[task] = n_episodes
 
             if n_episodes == 0:
-                raise Exception(f"{task}-{mode} has 0 episodes. Remove it from the list in dataset.py")
+                raise Exception(
+                    f"{task}-{mode} has 0 episodes. Remove it from the list in dataset.py")
 
             # Select random episode depending on the size of the dataset.
-            episodes[task] = np.random.choice(range(n_episodes), min(self.n_demos, n_episodes), False)
+            episodes[task] = np.random.choice(range(n_episodes), min(self.n_demos, n_episodes),
+                                              False)
 
         if self.n_demos > 0:
             self.images = self.cfg['dataset']['images']
@@ -834,7 +922,21 @@ class RavensMultiTaskDataset(RavensDataset):
             episode_id = np.random.choice(self.sample_set[self._task])
         else:
             episode_id = np.random.choice(range(self.n_episodes[self._task]))
-        episode, _ = self.load(episode_id, self.images, self.cache)
+        res = self.load(episode_id, self.images, self.cache)
+        if res:
+            episode, _ = res
+        else:
+            while not res:
+                self._task = np.random.choice(self.tasks)
+                self._path = os.path.join(self.root_path, f'{self._task}')
+
+                # Choose random episode.
+                if len(self.sample_set[self._task]) > 0:
+                    episode_id = np.random.choice(self.sample_set[self._task])
+                else:
+                    episode_id = np.random.choice(range(self.n_episodes[self._task]))
+                res = self.load(episode_id, self.images, self.cache)
+            episode, _ = res
 
         # Is the task sequential like stack-block-pyramid-seq?
         is_sequential_task = '-seq' in self._path.split("/")[-1]
@@ -866,7 +968,8 @@ class RavensMultiTaskDataset(RavensDataset):
 
             # 50% chance of sampling the main seen task and 50% chance of sampling any other seen-unseen task
             mult_attr_seen_sample_prob = 0.5
-            sampling_probs = [(1 - mult_attr_seen_sample_prob) / (len(all_tasks) - 1)] * len(all_tasks)
+            sampling_probs = [(1 - mult_attr_seen_sample_prob) / (len(all_tasks) - 1)] * len(
+                all_tasks)
             sampling_probs[0] = mult_attr_seen_sample_prob
 
             self._task = np.random.choice(all_tasks, p=sampling_probs)

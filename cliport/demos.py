@@ -22,12 +22,19 @@ def main(cfg):
     )
     task = tasks.names[cfg['task']]()
     task.mode = cfg['mode']
+    task.task_difficulty_level = cfg['task_difficulty_level']
     record = cfg['record']['save_video']
     save_data = cfg['save_data']
 
+    if task.task_difficulty_level == "hard":
+        cfg['task'] += '-hard'
+
     # Initialize scripted oracle agent and dataset.
     agent = task.oracle(env)
-    data_path = os.path.join(cfg['data_dir'], "{}-{}".format(cfg['task'], task.mode))
+    data_path = os.path.join(
+        cfg['data_dir'], "{}-{}".format(cfg['task'], task.mode)
+    )
+
     dataset = RavensDataset(data_path, cfg, n_demos=0, augment=False)
     print(f"Saving to: {data_path}")
     print(f"Mode: {task.mode}")
@@ -37,7 +44,7 @@ def main(cfg):
     if seed < 0:
         if task.mode == 'train':
             seed = -2
-        elif task.mode == 'val': # NOTE: beware of increasing val set to >100
+        elif task.mode == 'val':  # NOTE: beware of increasing val set to >100
             seed = -1
         elif task.mode == 'test':
             seed = -1 + 10000
@@ -56,6 +63,7 @@ def main(cfg):
         print('Oracle demo: {}/{} | Seed: {}'.format(dataset.n_episodes + 1, cfg['n'], seed))
 
         env.set_task(task)
+        task.task_difficulty_level = cfg['task_difficulty_level']
         obs = env.reset()
         info = env.info
         reward = 0
@@ -66,7 +74,7 @@ def main(cfg):
 
         # Start video recording (NOTE: super slow)
         if record:
-            env.start_rec(f'{dataset.n_episodes+1:06d}')
+            env.start_rec(f'{dataset.n_episodes + 1:06d}')
 
         # Rollout expert policy
         for _ in range(task.max_steps):

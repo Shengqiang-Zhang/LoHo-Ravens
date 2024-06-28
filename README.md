@@ -32,11 +32,10 @@ git clone https://github.com/Shengqiang-Zhang/lohoravens.git
 
 ```bash
 conda install pip
-cd LoHo-Ravens
+cd cliport-batchify
 pip install -r requirements.txt
 pip install torch==1.12.1+cu113 torchvision==0.13.1+cu113 torchaudio==0.12.1 --extra-index-url https://download.pytorch.org/whl/cu113
 pip install pytorch-lightning==1.9.5
-export CLIPORT_ROOT=$(pwd)
 python setup.py develop
 ```
 
@@ -47,7 +46,7 @@ TODO: add config dependencies on LLM and VLM.
 ## Generate dataset
 
 ```bash
-python cliport/demos.py n=1000 \
+python cliport/demo.py n=1000 \
     task=pick-and-place-primitive \
     mode=train
 ```

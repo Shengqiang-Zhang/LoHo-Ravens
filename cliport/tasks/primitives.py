@@ -9,11 +9,6 @@ class PickPlace():
 
     def __init__(self, height=0.32, speed=0.01):
         self.height, self.speed = height, speed
-        self.perturb_primitive = False
-
-    def seed(self, seed=None):
-        self._random = np.random.RandomState(seed)
-        return seed
 
     def __call__(self, movej, movep, ee, pose0, pose1):
         """Execute pick and place primitive.
@@ -62,10 +57,6 @@ class PickPlace():
             targ_pose = preplace_pose
             while not ee.detect_contact():
                 targ_pose = utils.multiply(targ_pose, delta)
-                if self.perturb_primitive:
-                    targ_pose = np.int32(targ_pose)
-                    noise = np.int32(self._random.normal(0, 2.5, targ_pose.shape))
-                    targ_pose += noise
                 timeout |= movep(targ_pose, self.speed)
                 if timeout:
                     return True
@@ -95,8 +86,8 @@ def push(movej, movep, ee, pose0, pose1):  # pylint: disable=unused-argument
     """
 
     # Adjust push start and end positions.
-    pos0 = np.float32((pose0[0][0], pose0[0][1], 0.005))
-    pos1 = np.float32((pose1[0][0], pose1[0][1], 0.005))
+    pos0 = np.float32((pose0[0][0], pose0[0][1], pose0[0][2]))
+    pos1 = np.float32((pose1[0][0], pose1[0][1], pose1[0][2]))
     vec = np.float32(pos1) - np.float32(pos0)
     length = np.linalg.norm(vec)
     vec = vec / length

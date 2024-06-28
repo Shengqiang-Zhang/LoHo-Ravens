@@ -64,7 +64,8 @@ def main(vcfg):
     name = '{}-{}-n{}'.format(eval_task, vcfg['agent'], vcfg['n_demos'])
 
     # Save path for results.
-    json_name = f"multi-results-{mode}.json" if 'multi' in vcfg['model_path'] else f"results-{mode}-openflamingo.json"
+    json_name = f"multi-results-{mode}.json" if 'multi' in vcfg[
+        'model_path'] else f"results-{mode}-openflamingo.json"
     save_path = vcfg['save_path']
     print(f"Save path for results: {save_path}")
     if not os.path.exists(save_path):
@@ -83,7 +84,8 @@ def main(vcfg):
     # LLM
     use_llm = vcfg["use_llm"]
     gpt_name_list = ["gpt-3.5-turbo", "chatgpt"]
-    open_source_llm_name_list = ["meta-llama/Llama-2-70b-hf",
+    open_source_llm_name_list = ["meta-llama/Meta-Llama-3-8B-Instruct",
+                                 "meta-llama/Llama-2-70b-hf",
                                  "upstage/Llama-2-70b-instruct-v2",
                                  "meta-llama/Llama-2-13b-chat-hf",
                                  "meta-llama/Llama-2-7b-chat-hf"]
@@ -167,7 +169,8 @@ def main(vcfg):
 
                 task.mode = mode
                 env.seed(seed)
-                env.set_task(task)  # SQ: I think this should be a key of interaction between env and task
+                env.set_task(
+                    task)  # SQ: I think this should be a key of interaction between env and task
                 obs = env.reset()
                 info = env.info  # SQ: Final language goal and env info with object poses, rotation, and colors
                 reward = 0
@@ -210,11 +213,13 @@ def main(vcfg):
 
                 while not done and n_steps < env.task.max_steps:
                     if use_llm:
-                        messages = update_message_history_with_next_plan(messages, next_plan, llm_name)
+                        messages = update_message_history_with_next_plan(messages, next_plan,
+                                                                         llm_name)
                         logging.info(f"Next_plan is: {next_plan}")
                         print("This is the end of the next plan output.")
                         info['lang_goal'] = next_plan
-                    act = agent.act(obs, info, goal)  # SQ: goal is not used in the implementation of act.
+                    act = agent.act(obs, info,
+                                    goal)  # SQ: goal is not used in the implementation of act.
                     lang_goal = info['lang_goal']
                     obs, reward, done, info = env.step(act)
                     n_steps += 1

@@ -11,8 +11,11 @@ import numpy as np
 from cliport.tasks import cameras
 from cliport.utils import pybullet_utils
 from cliport.utils import utils
-
+import string
 import pybullet as p
+import tempfile
+import random
+import sys
 
 PLACE_STEP = 0.0003
 PLACE_DELTA_THRESHOLD = 0.005
@@ -47,6 +50,8 @@ class Environment(gym.Env):
         """
         self.pix_size = 0.003125
         self.obj_ids = {'fixed': [], 'rigid': [], 'deformable': []}
+        self.objects = self.obj_ids  # make a copy
+
         self.homej = np.array([-1, -0.5, 0.5, -0.5, -0.5, 0]) * np.pi
         self.agent_cams = cameras.RealSenseD415.CONFIG
         self.record_cfg = record_cfg
@@ -72,6 +77,8 @@ class Environment(gym.Env):
             high=np.array([0.75, 0.5, 0.28], dtype=np.float32),
             shape=(3,),
             dtype=np.float32)
+        self.bounds = np.array([[0.25, 0.75], [-0.5, 0.5], [0, 0.3]])
+
         self.action_space = gym.spaces.Dict({
             'pose0':
                 gym.spaces.Tuple(
@@ -129,18 +136,97 @@ class Environment(gym.Env):
              for i in self.obj_ids['rigid']]
         return all(np.array(v) < 5e-3)
 
-    def add_object(self, urdf, pose, category='rigid'):
+    def fill_dummy_template(self, template):
+        """check if there are empty templates that haven't been fulfilled yet. if so. fill in dummy numbers """
+        full_template_path = os.path.join(self.assets_root, template)
+        with open(full_template_path, 'r') as file:
+            fdata = file.read()
+
+        fill = False
+        for field in ['DIMH', 'DIMR', 'DIMX', 'DIMY', 'DIMZ', 'DIM']:
+            # usually 3 should be enough
+            if field in fdata:
+                default_replace_vals = np.random.uniform(0.03, 0.05,
+                                                         size=(3,)).tolist()  # [0.03,0.03,0.03]
+                for i in range(len(default_replace_vals)):
+                    fdata = fdata.replace(f'{field}{i}', str(default_replace_vals[i]))
+                fill = True
+
+        for field in ['HALF']:
+            # usually 3 should be enough
+            if field in fdata:
+                default_replace_vals = np.random.uniform(0.01, 0.03,
+                                                         size=(3,)).tolist()  # [0.015,0.015,0.015]
+                for i in range(len(default_replace_vals)):
+                    fdata = fdata.replace(f'{field}{i}', str(default_replace_vals[i]))
+                fill = True
+
+        if fill:
+            alphabet = string.ascii_lowercase + string.digits
+            rname = ''.join(random.choices(alphabet, k=16))
+            tmpdir = tempfile.gettempdir()
+            template_filename = os.path.split(template)[-1]
+            fname = os.path.join(tmpdir, f'{template_filename}.{rname}')
+            with open(fname, 'w') as file:
+                file.write(fdata)
+            # print("fill-in dummys")
+
+            return fname
+        else:
+            return template
+
+    def add_object(self, urdf, pose, category='rigid', color=None, scale=1, **kwargs):
         """List of (fixed, rigid, or deformable) objects in env."""
         fixed_base = 1 if category == 'fixed' else 0
+
+        if 'template' in urdf:
+            if not os.path.exists(os.path.join(self.assets_root, urdf)):
+                urdf = urdf.replace("-template", "")
+
+            urdf = self.fill_dummy_template(urdf)
+
+        if not os.path.exists(os.path.join(self.assets_root, urdf)):
+            print(f"missing urdf error: {os.path.join(self.assets_root, urdf)}. use dummy block.")
+            urdf = 'stacking/block.urdf'
+
+        if len(pose) == 3 and (not hasattr(pose[0], '__len__')):
+            # add default orientation if missing
+            pose = (pose, (0, 0, 0, 1))
+
         obj_id = pybullet_utils.load_urdf(
             p,
             os.path.join(self.assets_root, urdf),
             pose[0],
             pose[1],
+            globalScaling=scale,
             useFixedBase=fixed_base)
+
         if not obj_id is None:
             self.obj_ids[category].append(obj_id)
+
+        if color is not None:
+            if type(color) is str:
+                color = utils.COLORS[color]
+            color = color + [1.]
+            p.changeVisualShape(obj_id, -1, rgbaColor=color)
+
+        if hasattr(self, 'record_cfg') and 'blender_render' in self.record_cfg and self.record_cfg[
+            'blender_render']:
+            # print("urdf:", os.path.join(self.assets_root, urdf))
+            # if color is None:
+            #     color = (0.5,0.5,0.5,1) # by default
+            print("color:", color)
+
+            self.blender_recorder.register_object(obj_id, os.path.join(self.assets_root, urdf),
+                                                  color=color)
+
         return obj_id
+
+    def set_color(self, obj_id, color):
+        p.changeVisualShape(obj_id, -1, rgbaColor=color + [1])
+
+    def set_object_color(self, *args, **kwargs):
+        return self.set_color(*args, **kwargs)
 
     # ---------------------------------------------------------------------------
     # Standard Gym Functions
@@ -162,9 +248,9 @@ class Environment(gym.Env):
         # Temporarily disable rendering to load scene faster.
         p.configureDebugVisualizer(p.COV_ENABLE_RENDERING, 0)
 
-        pybullet_utils.load_urdf(p, os.path.join(self.assets_root, PLANE_URDF_PATH),
-                                 [0, 0, -0.001])
-        pybullet_utils.load_urdf(
+        plane = pybullet_utils.load_urdf(p, os.path.join(self.assets_root, PLANE_URDF_PATH),
+                                         [0, 0, -0.001])
+        workspace = pybullet_utils.load_urdf(
             p, os.path.join(self.assets_root, UR5_WORKSPACE_URDF_PATH), [0.5, 0, 0])
 
         # Load UR5 robot arm equipped with suction end effector.
@@ -173,6 +259,22 @@ class Environment(gym.Env):
             p, os.path.join(self.assets_root, UR5_URDF_PATH))
         self.ee = self.task.ee(self.assets_root, self.ur5, 9, self.obj_ids)
         self.ee_tip = 10  # Link ID of suction cup.
+
+        if hasattr(self, 'record_cfg') and 'blender_render' in self.record_cfg and self.record_cfg[
+            'blender_render']:
+            from misc.pyBulletSimRecorder import PyBulletRecorder
+            self.blender_recorder = PyBulletRecorder()
+
+            self.blender_recorder.register_object(plane,
+                                                  os.path.join(self.assets_root, PLANE_URDF_PATH))
+            self.blender_recorder.register_object(workspace, os.path.join(self.assets_root,
+                                                                          UR5_WORKSPACE_URDF_PATH))
+            self.blender_recorder.register_object(self.ur5,
+                                                  os.path.join(self.assets_root, UR5_URDF_PATH))
+
+            self.blender_recorder.register_object(self.ee.base, self.ee.base_urdf_path)
+            if hasattr(self.ee, 'body'):
+                self.blender_recorder.register_object(self.ee.body, self.ee.urdf_path)
 
         # Get revolute joint indices of robot (skip fixed joints).
         n_joints = p.getNumJoints(self.ur5)
@@ -205,7 +307,8 @@ class Environment(gym.Env):
           (obs, reward, done, info) tuple containing MDP step data.
         """
         if action is not None:
-            timeout = self.task.primitive(self.movej, self.movep, self.ee, action['pose0'], action['pose1'])
+            timeout = self.task.primitive(self.movej, self.movep, self.ee, action['pose0'],
+                                          action['pose1'])
 
             # Exit early if action times out. We still return an observation
             # so that we don't break the Gym API contract.
@@ -217,9 +320,12 @@ class Environment(gym.Env):
                     obs['depth'] += (depth,)
                 return obs, 0.0, True, self.info
 
+        start_time = time.time()
         # Step simulator asynchronously until objects settle.
         while not self.is_static:
             self.step_simulation()
+            if time.time() - start_time > 5:  # timeout
+                break
 
         # Get task rewards.
         reward, info = self.task.reward() if action is not None else (0, {})
@@ -326,6 +432,9 @@ class Environment(gym.Env):
         task.set_assets_root(self.assets_root)
         self.task = task
 
+    def get_task_name(self):
+        return type(self.task).__name__
+
     def get_lang_goal(self):
         if self.task:
             return self.task.get_lang_goal()
@@ -339,7 +448,7 @@ class Environment(gym.Env):
     def movej(self, targj, speed=0.01, timeout=5):
         """Move UR5 to target joint configuration."""
         if self.save_video:
-            timeout = timeout * 50
+            timeout = timeout * 30  # 50?
 
         t0 = time.time()
         while (time.time() - t0) < timeout:
@@ -382,7 +491,7 @@ class Environment(gym.Env):
                                                             f"{video_filename}.mp4"),
                                                fps=self.record_cfg['fps'],
                                                format='FFMPEG',
-                                               codec='h264',)
+                                               codec='h264', )
         p.setRealTimeSimulation(False)
         self.save_video = True
 
@@ -400,6 +509,10 @@ class Environment(gym.Env):
         color, depth, _ = self.render_camera(config, image_size, shadow=0)
         color = np.array(color)
 
+        if hasattr(self.record_cfg, 'blender_render') and self.record_cfg['blender_render']:
+            # print("add blender key frame")
+            self.blender_recorder.add_keyframe()
+
         # Add language instruction to video.
         if self.record_cfg['add_text']:
             lang_goal = self.get_lang_goal()
@@ -410,14 +523,25 @@ class Environment(gym.Env):
             font_thickness = 1
 
             # Write language goal.
-            lang_textsize = cv2.getTextSize(lang_goal, font, font_scale, font_thickness)[0]
-            lang_textX = (image_size[1] - lang_textsize[0]) // 2
-
-            color = cv2.putText(color, lang_goal, org=(lang_textX, 600),
-                                fontScale=font_scale,
-                                fontFace=font,
-                                color=(0, 0, 0),
-                                thickness=font_thickness, lineType=cv2.LINE_AA)
+            line_length = 59
+            for i in range(len(lang_goal) // line_length + 1):
+                lang_textsize = cv2.getTextSize(
+                    lang_goal[i * line_length:(i + 1) * line_length],
+                    font,
+                    font_scale,
+                    font_thickness
+                )[0]
+                lang_textX = (image_size[1] - lang_textsize[0]) // 2
+                color = cv2.putText(
+                    color,
+                    lang_goal[i * line_length:(i + 1) * line_length],
+                    org=(lang_textX, 570 + i * 30),  # 600
+                    fontScale=font_scale,
+                    fontFace=font,
+                    color=(0, 0, 0),
+                    thickness=font_thickness,
+                    lineType=cv2.LINE_AA
+                )
 
             ## Write Reward.
             # reward_textsize = cv2.getTextSize(reward, font, font_scale, font_thickness)[0]
@@ -428,6 +552,26 @@ class Environment(gym.Env):
             #                     fontFace=font,
             #                     color=(0, 0, 0),
             #                     thickness=font_thickness, lineType=cv2.LINE_AA)
+
+            color = np.array(color)
+
+        if 'add_task_text' in self.record_cfg and self.record_cfg['add_task_text']:
+            lang_goal = self.get_task_name()
+            reward = f"Success: {self.task.get_reward():.3f}"
+
+            font = cv2.FONT_HERSHEY_DUPLEX
+            font_scale = 1
+            font_thickness = 2
+
+            # Write language goal.
+            lang_textsize = cv2.getTextSize(lang_goal, font, font_scale, font_thickness)[0]
+            lang_textX = (image_size[1] - lang_textsize[0]) // 2
+
+            color = cv2.putText(color, lang_goal, org=(lang_textX, 600),
+                                fontScale=font_scale,
+                                fontFace=font,
+                                color=(255, 0, 0),
+                                thickness=font_thickness, lineType=cv2.LINE_AA)
 
             color = np.array(color)
 
@@ -464,6 +608,18 @@ class Environment(gym.Env):
             obs['depth'] += (depth,)
 
         return obs
+
+    def get_object_pose(self, obj_id):
+        return p.getBasePositionAndOrientation(obj_id)
+
+    def get_object_size(self, obj_id):
+        """ approximate object's size using AABB """
+        aabb_min, aabb_max = p.getAABB(obj_id)
+
+        size_x = aabb_max[0] - aabb_min[0]
+        size_y = aabb_max[1] - aabb_min[1]
+        size_z = aabb_max[2] - aabb_min[2]
+        return size_z * size_y * size_x
 
 
 class EnvironmentNoRotationsWithHeightmap(Environment):

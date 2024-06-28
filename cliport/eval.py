@@ -84,6 +84,7 @@ def main(vcfg):
 
         results = []
         mean_reward = 0.0
+        mean_binary_reward = 0.0
 
         # Run testing for each training run.
         for train_run in range(vcfg['n_repeats']):
@@ -122,6 +123,7 @@ def main(vcfg):
                 obs = env.reset()
                 info = env.info
                 reward = 0
+                binary_reward = 0
 
                 # Start recording video (NOTE: super slow)
                 if record:
@@ -138,11 +140,15 @@ def main(vcfg):
                     total_reward += reward
                     print(f'Total Reward: {total_reward:.3f} | Done: {done}\n')
                     if done:
+                        binary_reward = 1
                         break
 
-                results.append((total_reward, info))
-                mean_reward = np.mean([r for r, i in results])
+                # results.append((total_reward, info))
+                results.append((total_reward, info, binary_reward))
+                mean_reward = np.mean([r for r, i, _ in results])
+                mean_binary_reward = np.mean([bd for r, i, bd in results])
                 print(f'Mean: {mean_reward} | Task: {task_name} | Ckpt: {ckpt}')
+                print(f'Mean: {mean_binary_reward} | Task: {task_name} | Ckpt: {ckpt}')
 
                 # End recording video
                 if record:
@@ -151,6 +157,7 @@ def main(vcfg):
             all_results[ckpt] = {
                 'episodes': results,
                 'mean_reward': mean_reward,
+                'mean_binary_reward': mean_binary_reward,
             }
 
         # Save results in a json file.

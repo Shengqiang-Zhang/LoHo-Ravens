@@ -19,7 +19,8 @@ class PickAndPlacePrimitive(Task):
         super().__init__()
         self.max_steps = 3
         self.pos_eps = 0.05
-        self.lang_template = "pick up the {pick_color} block and place it on the {place_color} {place}."
+        self.lang_template = ("pick up the {pick_color} block "
+                              "and place it on the {place_color} {place}.")
         self.task_completed_desc = "done placing blocks."
 
     def reset(self, env):
@@ -39,25 +40,28 @@ class PickAndPlacePrimitive(Task):
         bowl_util_colors = [utils.COLORS[cn] for cn in bowl_colors]
         zone_util_colors = [utils.COLORS[cn] for cn in zone_colors]
 
-        self.scene_description = f"On the table, there are {n_blocks} blocks. Their colors are {block_colors}. " \
-                                 f"There are {n_zones} zones. Their colors are {zone_colors}. " \
-                                 f"There are {n_bowls} bowls. Their colors are {bowl_colors}. "
+        self.scene_description = (f"On the table, there are {n_blocks} blocks. "
+                                  f"Their colors are {block_colors}. "
+                                  f"There are {n_zones} zones. Their colors are {zone_colors}. "
+                                  f"There are {n_bowls} bowls. Their colors are {bowl_colors}. ")
 
         # Add bowls.
         bowl_size = (0.12, 0.12, 0)
         bowl_urdf = 'bowl/bowl.urdf'
-        bowl_poses = []
+        target_bowl_pose = None
         for i in range(n_bowls):
             bowl_pose = self.get_random_pose(env, bowl_size)
             bowl_id = env.add_object(bowl_urdf, bowl_pose, 'fixed')
             p.changeVisualShape(bowl_id, -1, rgbaColor=bowl_util_colors[i] + [1])
-            bowl_poses.append(bowl_pose)
+            if i == 0:
+                target_bowl_pose = bowl_pose
 
         # Add blocks.
         blocks = []
         block_pts = {}
         block_size = (0.04, 0.04, 0.04)
         block_urdf = 'stacking/block.urdf'
+        pick_block = None
         place_pose = None
         for i in range(n_blocks):
             block_pose = self.get_random_pose(env, block_size)
@@ -65,53 +69,60 @@ class PickAndPlacePrimitive(Task):
             p.changeVisualShape(block_id, -1, rgbaColor=block_util_colors[i] + [1])
             if i == 0:
                 block_pts[block_id] = self.get_box_object_points(block_id)
+                if target_idx == 1:
+                    pick_block = (block_id, (0, None))
+                else:
+                    pick_block = (block_id, (np.pi / 2, None))
             elif i == 1:
                 place_pose = block_pose
-            if target_idx == 1:
-                blocks.append((block_id, (0, None)))
-            else:
-                blocks.append((block_id, (np.pi / 2, None)))
 
         # Add zones.
         zone_size = (0.1, 0.1, 0)
-        zone_poses = []
+        target_zone_pose = None
         for i in range(n_zones):
             zone_pose = self.get_random_pose(env, zone_size)
             zone_obj_id = env.add_object('zone/zone.urdf', zone_pose, 'fixed')
             p.changeVisualShape(zone_obj_id, -1, rgbaColor=zone_util_colors[i] + [1])
-            zone_poses.append(zone_pose)
-            # zone_poses.append((zone_obj_id, (0, None)))
+            if i == 0:
+                target_zone_pose = zone_pose
 
         if target_objs[target_idx] == "block":
             target_pose = (
-                (place_pose[0][0], place_pose[0][1], block_size[2] * 2),
+                (place_pose[0][0], place_pose[0][1], block_size[2] + block_size[2] / 2),
                 place_pose[1]
             )
-            self.goals.append((blocks[:1], np.eye(1),
-                               [target_pose], False, True, 'pose', None, 1))
+            self.goals.append(
+                ([pick_block], np.eye(1), [target_pose], False, True, 'pose', None, 1)
+            )
             self.lang_goals.append(self.lang_template.format(pick_color=block_colors[0],
                                                              place_color=block_colors[1],
                                                              place=target_objs[target_idx]))
         elif target_objs[target_idx] == "bowl":
-            # target_matrix = np.zeros((n_blocks, n_bowls))
-            # target_matrix[0, 0] = 1
-            # print(target_matrix)
+            self.consider_z_in_match = False
             target_matrix = np.ones((1, 1))
-            self.goals.append(([blocks[0]], target_matrix,
-                               [bowl_poses[0]], False, True, 'pose', None, 1))
+            self.goals.append(
+                ([pick_block], target_matrix, [target_bowl_pose], False, True, 'pose', None, 1)
+            )
             self.lang_goals.append(self.lang_template.format(pick_color=block_colors[0],
                                                              place_color=bowl_colors[0],
                                                              place=target_objs[target_idx]))
-        else:
+        elif target_objs[target_idx] == "zone":
             target_matrix = np.ones((1, 1))
-            self.goals.append(([blocks[0]], target_matrix,
-                               [zone_poses[0]], True, False, 'zone',
-                               (block_pts, [(zone_poses[0], zone_size)]), 1))
+            pos, rot = target_zone_pose
+            goal_pose = ((pos[0], pos[1], block_size[2] / 2), rot)
+            self.goals.append(
+                ([pick_block], target_matrix, [goal_pose],
+                 True, False, 'zone',
+                 (block_pts, [(target_zone_pose, zone_size)]), 1)
+            )
             self.lang_goals.append(self.lang_template.format(pick_color=block_colors[0],
                                                              place_color=zone_colors[0],
                                                              place=target_objs[target_idx]))
+        else:
+            raise ValueError("Unknown target object: {}".format(target_objs[target_idx]))
 
-    def get_colors(self) -> Union[List[str], Set[str]]:
+    @staticmethod
+    def get_colors() -> Union[List[str], Set[str]]:
         return set(utils.TRAIN_COLORS + utils.EVAL_COLORS)
 
 
@@ -138,11 +149,9 @@ class PickAndPlacePrimitiveWithSize(Task):
         n_blocks = np.random.randint(2, 4)
         n_bowls = np.random.randint(2, 4)
         n_bigger_blocks = np.random.randint(2, n_blocks + 1)
-        bigger_block_indexes = np.random.choice(
-            list(range(n_blocks + n_bigger_blocks)),
-            size=n_bigger_blocks,
-            replace=False
-        )
+        bigger_block_indexes = np.random.choice(list(range(n_blocks + n_bigger_blocks)),
+                                                size=n_bigger_blocks,
+                                                replace=False, )
 
         block_colors = random.sample(all_color_names, n_blocks)
         bowl_colors = random.sample(all_color_names, n_bowls)
@@ -156,28 +165,22 @@ class PickAndPlacePrimitiveWithSize(Task):
         block_util_colors = [utils.COLORS[cn] for cn in block_colors]
         bowl_util_colors = [utils.COLORS[cn] for cn in bowl_colors]
 
-        self.scene_description = f"On the table, there are {n_blocks + n_bigger_blocks} blocks. " \
-                                 f"Their colors are {block_colors}. " \
-                                 f"There are {n_bowls} bowls. Their colors are {bowl_colors}. "
+        self.scene_description = (f"On the table, there are {n_blocks + n_bigger_blocks} blocks. "
+                                  f"Their colors are {block_colors}. "
+                                  f"There are {n_bowls} bowls. Their colors are {bowl_colors}. ")
 
         # Add bowls.
         bowl_size = (0.12, 0.12, 0)
         bowl_urdf = 'bowl/bowl.urdf'
-        bowl_poses = []
         for i in range(n_bowls):
             bowl_pose = self.get_random_pose(env, bowl_size)
-            if i == 0:  # Always choose the first bowl as the target bowl
-                place_bowl_pose = bowl_pose
             bowl_id = env.add_object(bowl_urdf, bowl_pose, 'fixed')
             p.changeVisualShape(bowl_id, -1, rgbaColor=bowl_util_colors[i] + [1])
-            bowl_poses.append(bowl_pose)
 
         # Add blocks.
-        blocks = []
-        block_pts = {}
-        block_size = (0.04, 0.04, 0.04)
-        block_urdf = 'stacking/block.urdf'
-        bigger_block_urdf = 'stacking/bigger_block.urdf'
+        block_size, bigger_block_size = (0.04, 0.04, 0.04), (0.06, 0.06, 0.06)
+        block_urdf, bigger_block_urdf = 'stacking/block.urdf', 'stacking/bigger_block.urdf'
+        pick_block = None
         pick_obj_pose, place_obj_pose = None, None
         pick_block_idx = np.random.randint(0, n_blocks + n_bigger_blocks)
         place_block_idx = np.random.randint(0, n_blocks + n_bigger_blocks)
@@ -186,7 +189,7 @@ class PickAndPlacePrimitiveWithSize(Task):
 
         for i in range(n_blocks + n_bigger_blocks):
             if i in bigger_block_indexes:
-                block_pose = self.get_random_pose(env, block_size)
+                block_pose = self.get_random_pose(env, bigger_block_size)
                 block_id = env.add_object(bigger_block_urdf, block_pose)
             else:
                 block_pose = self.get_random_pose(env, block_size)
@@ -195,29 +198,33 @@ class PickAndPlacePrimitiveWithSize(Task):
 
             if i == pick_block_idx:
                 pick_obj_pose = block_pose
+                pick_block = (block_id, (np.pi / 2, None))
             elif i == place_block_idx:
-                block_pts[block_id] = self.get_box_object_points(block_id)
                 place_obj_pose = block_pose
-            blocks.append((block_id, (np.pi / 2, None)))
 
         pick_size_desc = "bigger" if pick_block_idx in bigger_block_indexes else "smaller"
         place_block_size_desc = "bigger" if place_block_idx in bigger_block_indexes else "smaller"
 
         target_pos = (
-            place_obj_pose[0][0],
-            place_obj_pose[0][1],
-            place_obj_pose[0][2] + pick_obj_pose[0][2] // 2
+            (place_obj_pose[0][0],
+             place_obj_pose[0][1],
+             place_obj_pose[0][2] * 2 + pick_obj_pose[0][2]),  # note the height is half of size[2]
+            place_obj_pose[1]
         )
-        self.goals.append(([blocks[pick_block_idx]], np.eye(1),
-                           [(target_pos, place_obj_pose[1])], False, True, 'pose', None, 1))
-        self.lang_goals.append(self.lang_template.format(
-            pick_size=pick_size_desc,
-            pick_color=block_colors[pick_block_idx],
-            place_size=place_block_size_desc,
-            place_color=block_colors[place_block_idx],
-        ))
+        # print("target_pos:", target_pos)
+        # print(f"height, {place_obj_pose[0][2]}, {pick_obj_pose[0][2]}")
+        self.goals.append(
+            ([pick_block], np.eye(1), [target_pos], False, True, 'pose', None, 1)
+        )
+        self.lang_goals.append(
+            self.lang_template.format(pick_size=pick_size_desc,
+                                      pick_color=block_colors[pick_block_idx],
+                                      place_size=place_block_size_desc,
+                                      place_color=block_colors[place_block_idx], )
+        )
 
-    def get_colors(self) -> Union[List[str], Set[str]]:
+    @staticmethod
+    def get_colors() -> Union[List[str], Set[str]]:
         return set(utils.TRAIN_COLORS + utils.EVAL_COLORS)
 
 
@@ -330,14 +337,15 @@ class PickAndPlacePrimitiveWithAbsolutePosition(Task):
     Pick-and-place primitive for the LLM planner.
     This primitive is trained with all the colors, following the setting of `Inner Monologue`.
     In addition, this primitive is trained to discriminate the absolute position: center of the table.
-    Pick up the [block1] and place it on the [place_pos].
+    Pick up the [block1] on the [pick_area] and place it on the [place_area].
     """
 
     def __init__(self):
         super().__init__()
         self.max_steps = 3
         self.pos_eps = 0.05
-        self.lang_template = "pick up the {pick_color} block and place it on the {place_pos}"
+        self.lang_template = ("pick up the {pick_color} block "
+                              "on the {pick_area} and place it on the {place_area}.")
         self.task_completed_desc = "done placing blocks."
 
     def reset(self, env):
@@ -346,99 +354,83 @@ class PickAndPlacePrimitiveWithAbsolutePosition(Task):
 
         n_blocks = np.random.randint(2, 4)
         n_bowls = np.random.randint(2, 4)
-        place_pos = random.choice(
-            ["center", "top left area", "top right area", "bottom left area", "bottom right area"]
-        )
 
         block_colors = random.sample(all_color_names, n_blocks)
         bowl_colors = random.sample(all_color_names, n_bowls)
         block_util_colors = [utils.COLORS[cn] for cn in block_colors]
         bowl_util_colors = [utils.COLORS[cn] for cn in bowl_colors]
 
-        # Get absolute position
         block_size = (0.04, 0.04, 0.04)
         bowl_size = (0.12, 0.12, 0)
-        x_length = self.bounds[0][1] - self.bounds[0][0]
-        y_length = self.bounds[1][1] - self.bounds[1][0]
-        height = block_size[2] // 2
-        center_pos = (self.bounds[0][0] + x_length / 2, self.bounds[1][0] + y_length / 2, height)
-        # theta = np.random.rand() * 2 * np.pi
-        theta = 0
-        rot = utils.eulerXYZ_to_quatXYZW((0, 0, theta))
-
-        # Define absolute position
-        top_left_area = np.array([
-            [self.bounds[0, 0], center_pos[0]],
-            [self.bounds[1, 0], center_pos[1]],
-        ])
-        top_right_area = np.array([
-            [self.bounds[0, 0], center_pos[0]],
-            [center_pos[1], self.bounds[1, 1]],
-        ])
-        bottom_left_area = np.array([
-            [center_pos[0], self.bounds[0, 1]],
-            [self.bounds[1, 0], center_pos[1]],
-        ])
-        bottom_right_area = np.array([
-            [center_pos[0], self.bounds[0, 1]],
-            [center_pos[1], self.bounds[1, 1]],
-        ])
-        if place_pos == "center":
-            x_start, x_end = center_pos[0], center_pos[0]
-            y_start, y_end = center_pos[1], center_pos[1]
-        elif place_pos == "top left area":
-            x_start, x_end = top_left_area[0, 0], top_left_area[0, 1]
-            y_start, y_end = top_left_area[1, 0], top_left_area[1, 1]
-        elif place_pos == "top right area":
-            x_start, x_end = top_right_area[0, 0], top_right_area[0, 1]
-            y_start, y_end = top_right_area[1, 0], top_right_area[1, 1]
-        elif place_pos == "bottom left area":
-            x_start, x_end = bottom_left_area[0, 0], bottom_left_area[0, 1]
-            y_start, y_end = bottom_left_area[1, 0], bottom_left_area[1, 1]
-        elif place_pos == "bottom right area":
-            x_start, x_end = bottom_right_area[0, 0], bottom_right_area[0, 1]
-            y_start, y_end = bottom_right_area[1, 0], bottom_right_area[1, 1]
-        else:
-            raise ValueError("place_pos value is wrong!")
-
-        random_area_pose = [
-            (
-                np.random.uniform(x_start, x_end),
-                np.random.uniform(y_start, y_end),
-                height
-            ),
-            rot
-        ]
+        height = block_size[2] / 2
 
         # Add bowls.
         bowl_urdf = 'bowl/bowl.urdf'
-        bowl_poses = []
         for i in range(n_bowls):
             bowl_pose = self.get_random_pose(env, bowl_size)
             bowl_id = env.add_object(bowl_urdf, bowl_pose, 'fixed')
             p.changeVisualShape(bowl_id, -1, rgbaColor=bowl_util_colors[i] + [1])
-            bowl_poses.append(bowl_pose)
 
         # Add blocks.
-        blocks = []
-        block_pts = {}
         block_urdf = 'stacking/block.urdf'
+        first_block, first_block_pose = None, None
+        block_pts = {}
         for i in range(n_blocks):
             block_pose = self.get_random_pose(env, block_size)
             block_id = env.add_object(block_urdf, block_pose)
             p.changeVisualShape(block_id, -1, rgbaColor=block_util_colors[i] + [1])
             if i == 0:
                 block_pts[block_id] = self.get_box_object_points(block_id)
-                base_pose = block_pose
-            blocks.append((block_id, (np.pi / 2, None)))
+                first_block = (block_id, (np.pi / 2, None))
+                first_block_pose = block_pose
 
-        self.goals.append((blocks[:1], np.eye(1),
-                           [random_area_pose], False, True, 'pose', None, 1))
+        # Calculate which area the first block is on.
+        pick_area = None
+        pos, rot = first_block_pose
+        for area_k, area_v in self.area_boundary.items():
+            if (
+                    (area_v["x_start"] <= pos[0] <= area_v["x_end"])
+                    and
+                    (area_v["y_start"] <= pos[1] <= area_v["y_end"])
+            ):
+                pick_area = area_k
+                break
+
+        area_candidates = [
+            "center", "top left area", "top right area", "bottom left area", "bottom right area"
+        ]
+        area_candidates.remove(pick_area)
+        place_area = random.choice(area_candidates)
+        place_boundary = self.area_boundary[place_area]
+        x_start, x_end = place_boundary["x_start"], place_boundary["x_end"]
+        y_start, y_end = place_boundary["y_start"], place_boundary["y_end"]
+        # place_pose = [
+        #     (np.random.uniform(x_start, x_end), np.random.uniform(y_start, y_end), height),
+        #     rot
+        # ]
+
+        place_pose = [
+            (x_start + (x_end - x_start) / 2, y_start + (y_end - y_start) / 2, height),
+            rot
+        ]
+        if (x_end - x_start == 0) and (y_end - y_start == 0):  # center
+            place_area_size = (block_size[0] * 2, block_size[1] * 2, 0)
+        else:
+            place_area_size = (x_end - x_start, y_end - y_start, 0)
+
+        self.goals.append(
+            ([first_block], np.eye(1), [place_pose],
+             True, False, 'zone',
+             (block_pts, [(place_pose, place_area_size)]), 1)
+        )
         self.lang_goals.append(self.lang_template.format(pick_color=block_colors[0],
-                                                         place_pos=place_pos))
+                                                         pick_area=pick_area,
+                                                         place_area=place_area))
 
-        self.scene_description = f"On the table, there are {n_blocks} blocks. Their colors are {block_colors}. " \
-                                 f"There are {n_bowls} bowls. Their colors are {bowl_colors}. "
+        self.scene_description = (f"On the table, there are {n_blocks} blocks. "
+                                  f"Their colors are {block_colors}. "
+                                  f"There are {n_bowls} bowls. Their colors are {bowl_colors}. ")
 
-    def get_colors(self) -> Union[List[str], Set[str]]:
+    @staticmethod
+    def get_colors() -> Union[List[str], Set[str]]:
         return set(utils.TRAIN_COLORS + utils.EVAL_COLORS)

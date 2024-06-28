@@ -1,17 +1,33 @@
 import logging
 from pathlib import Path
-from typing import Union, List
+from typing import Union, List, Dict, Any
 
 import torch
 from PIL import Image
 from huggingface_hub import hf_hub_download
 from open_flamingo import create_model_and_transforms
+from transformers import AutoModelForCausalLM, AutoTokenizer, TextStreamer
 
 
 def load_vlm(vlm_name: str, device: Union[torch.device, str]):
     # loads InstructBLIP pre-trained model
     logging.info("-" * 10 + f"Loading the VLM {vlm_name}" + "-" * 10)
-    if vlm_name == "OpenFlamingo-3B-vitl-mpt1b":
+    if "cogvlm" in vlm_name.lower():
+        TORCH_TYPE = torch.bfloat16 if (
+                torch.cuda.is_available() and torch.cuda.get_device_capability()[0] >= 8
+        ) else torch.float16
+
+        tokenizer = AutoTokenizer.from_pretrained(
+            vlm_name, do_lower_case=True,
+            trust_remote_code=True
+        )
+        model = AutoModelForCausalLM.from_pretrained(
+            vlm_name,
+            torch_dtype=TORCH_TYPE,
+            trust_remote_code=True,
+        ).to(device).eval()
+
+    elif vlm_name == "OpenFlamingo-3B-vitl-mpt1b":
         vlm, vis_processors, txt_processors = create_model_and_transforms(
             clip_vision_encoder_path="ViT-L-14",
             clip_vision_encoder_pretrained="openai",
@@ -20,7 +36,8 @@ def load_vlm(vlm_name: str, device: Union[torch.device, str]):
             cross_attn_every_n_layers=1
         )
         vlm.to(device)
-        checkpoint_path = hf_hub_download("openflamingo/OpenFlamingo-3B-vitl-mpt1b", "checkpoint.pt")
+        checkpoint_path = hf_hub_download("openflamingo/OpenFlamingo-3B-vitl-mpt1b",
+                                          "checkpoint.pt")
         vlm.load_state_dict(torch.load(checkpoint_path), strict=False)
     elif vlm_name == "OpenFlamingo-9B-vitl-mpt7b":
         vlm, vis_processors, txt_processors = create_model_and_transforms(
@@ -31,7 +48,8 @@ def load_vlm(vlm_name: str, device: Union[torch.device, str]):
             cross_attn_every_n_layers=4
         )
         vlm.to(device)
-        checkpoint_path = hf_hub_download("openflamingo/OpenFlamingo-9B-vitl-mpt7b", "checkpoint.pt")
+        checkpoint_path = hf_hub_download("openflamingo/OpenFlamingo-9B-vitl-mpt7b",
+                                          "checkpoint.pt")
         vlm.load_state_dict(torch.load(checkpoint_path), strict=False)
     else:
         raise ValueError("vlm_name is set right!")
@@ -312,34 +330,89 @@ def parse_openflamingo_output(output: str, is_success_description: bool) -> str:
 
 
 def get_description_from_vlm(
-        vlm_args,
-        example_img_directory,
-        test_imgs,
-        is_success_description,
-        last_instruction=None,
-        device=None,
+        vlm_name: str,
+        vlm_args: Dict[str, Any],
+        example_img_directory: str,
+        test_imgs_path: List[str],
+        is_success_description: bool,
+        last_instruction: str = None,
+        device: Union[str, torch.device] = None,
+        query: str = None,
+        torch_type=torch.float16,
 ):
-    tokenizer, vlm, vis_processor = vlm_args["tokenizer"], vlm_args["vlm"], vlm_args["vis_processor"]
+    tokenizer, vlm, vis_processor = (
+        vlm_args["tokenizer"], vlm_args["vlm"], vlm_args["vis_processor"]
+    )
+    if "cogvlm" in vlm_name.lower():
+        if not is_success_description:
+            query = "USER: Please give a detailed description of the image. "
+        else:
+            query = (
+                "USER: You are given two images of robotic actions. "
+                "The first image records the observation before the robot acts. "
+                "The second image records the observation after the robot acts. "
+                f"The language instruction for the action is {last_instruction}. "
+                "Please judge whether this action is executed successfully or not. "
+                # "What's your answer?"
+            )
+        if len(test_imgs_path) > 1:
+            query += "There are multiple images as input. "
+        for i in range(len(test_imgs_path)):
+            history = []
+            if len(test_imgs_path) > 1:
+                query += (
+                    f"This is the {i}-th image. "
+                    # f"What's your answer?"
+                )
+            query += "Assistant:"
+            image = Image.open(test_imgs_path[i]).convert('RGB')
 
-    lang_x, vision_x = get_prompt_for_openflamingo(
-        tokenizer,
-        vis_processor,
-        example_img_directory,
-        test_imgs,
-        is_success_description,
-        last_instruction,
-        device
-    )
-    description = vlm.generate(
-        vision_x=vision_x,
-        lang_x=lang_x["input_ids"],
-        attention_mask=lang_x["attention_mask"],
-        max_new_tokens=128,
-        num_beams=3,
-    )
-    description = parse_openflamingo_output(
-        tokenizer.decode(description[0]),
-        is_success_description
-    )
-
-    return description
+            input_by_model = vlm.build_conversation_input_ids(
+                tokenizer,
+                query=query,
+                history=history,
+                images=[image],
+                template_version='chat'
+            )
+            inputs = {
+                'input_ids': input_by_model['input_ids'].unsqueeze(0).to(device),
+                'token_type_ids': input_by_model['token_type_ids'].unsqueeze(0).to(device),
+                'attention_mask': input_by_model['attention_mask'].unsqueeze(0).to(device),
+                'images': [
+                    [input_by_model['images'][0].to(device).to(torch_type)]
+                ] if image is not None else None,
+            }
+            gen_kwargs = {
+                "max_new_tokens": 2048,
+                "pad_token_id": 128002,
+            }
+            with torch.no_grad():
+                outputs = vlm.generate(**inputs, **gen_kwargs)
+                outputs = outputs[:, inputs['input_ids'].shape[1]:]
+                response = tokenizer.decode(outputs[0])
+                response = response.split("<|end_of_text|>")[0]
+                print("\nCogVLM2:", response)
+            history.append((query, response))
+        return response
+    else:
+        lang_x, vision_x = get_prompt_for_openflamingo(
+            tokenizer,
+            vis_processor,
+            example_img_directory,
+            test_imgs_path,
+            is_success_description,
+            last_instruction,
+            device
+        )
+        description = vlm.generate(
+            vision_x=vision_x,
+            lang_x=lang_x["input_ids"],
+            attention_mask=lang_x["attention_mask"],
+            max_new_tokens=128,
+            num_beams=3,
+        )
+        description = parse_openflamingo_output(
+            tokenizer.decode(description[0]),
+            is_success_description
+        )
+        return description

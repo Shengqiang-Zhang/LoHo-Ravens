@@ -13,6 +13,7 @@ disp: False  # visualize PyBullet
 shared_memory: False
 task: packing-boxes-pairs-seen-colors
 mode: train # 'train' or 'val' or 'test'
+task_difficulty_level: easy  # "easy" or "hard"
 n: 1000 # number of demos to generate
 save_data: True  # write episodes to disk
 
@@ -27,7 +28,7 @@ dataset:
 record:
   save_video: False
   save_video_path: ${data_dir}/${task}-${mode}/videos/
-  add_text: False
+  add_text: True
   fps: 20
   video_height: 640
   video_width: 720

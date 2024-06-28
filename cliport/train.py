@@ -44,8 +44,9 @@ def main(cfg):
     print(f"Hydra dir: {hydra_dir}")
     checkpoint_path = os.path.join(cfg['train']['train_dir'], 'checkpoints')
     last_checkpoint_path = os.path.join(checkpoint_path, 'last.ckpt')
-    last_checkpoint = last_checkpoint_path if os.path.exists(last_checkpoint_path) and cfg['train'][
-        'load_from_last_ckpt'] else None
+    last_checkpoint = last_checkpoint_path if (
+            os.path.exists(last_checkpoint_path) and cfg['train']['load_from_last_ckpt']
+    ) else None
     checkpoint_callback = ModelCheckpoint(
         monitor=cfg['wandb']['saver']['monitor'],
         dirpath=checkpoint_path,
@@ -71,16 +72,22 @@ def main(cfg):
     )
 
     # Resume epoch and global_steps
-    if last_checkpoint:
-        print(f"Resuming: {last_checkpoint}")
-        last_ckpt = torch.load(last_checkpoint)
-        trainer.current_epoch = last_ckpt['epoch']
-        trainer.global_step = last_ckpt['global_step']
-        del last_ckpt
+    # if last_checkpoint:
+    #     print(f"Resuming: {last_checkpoint}")
+    #     last_ckpt = torch.load(last_checkpoint)
+    #     trainer
+    #     trainer.current_epoch = 9
+    #     trainer.global_step = 16669
+    #     # trainer.current_epoch = last_ckpt['epoch']
+    #     # trainer.global_step = last_ckpt['global_step']
+    #     del last_ckpt
 
     # Config
     data_dir = cfg['train']['data_dir']
     task = cfg['train']['task']
+    task_difficulty_level = cfg['train']['task_difficulty_level']
+    if task_difficulty_level == 'hard':
+        task += '-hard'
     agent_type = cfg['train']['agent']
     n_demos = cfg['train']['n_demos']
     n_val = cfg['train']['n_val']
@@ -90,17 +97,33 @@ def main(cfg):
     # Datasets
     dataset_type = cfg['dataset']['type']
     if 'multi' in dataset_type:
-        train_ds = RavensMultiTaskDataset(data_dir, cfg, group=task, mode='train', n_demos=n_demos, augment=True)
-        val_ds = RavensMultiTaskDataset(data_dir, cfg, group=task, mode='val', n_demos=n_val, augment=False)
+        train_ds = RavensMultiTaskDataset(
+            data_dir, cfg, group=task, mode='train', n_demos=n_demos, augment=True
+        )
+        val_ds = RavensMultiTaskDataset(
+            data_dir, cfg, group=task, mode='val', n_demos=n_val, augment=False
+        )
     # elif 'real' in dataset_type:
-    #     train_ds = RealDataset(os.path.join(data_dir, '{}-train'.format(task)), cfg, n_demos=n_demos, augment=False)
-    #     val_ds = RealDataset(os.path.join(data_dir, '{}-val'.format(task)), cfg, n_demos=n_val, augment=False)
+    #     train_ds = RealDataset(
+    #         os.path.join(data_dir, '{}-train'.format(task)), cfg, n_demos=n_demos, augment=False
+    #     )
+    #     val_ds = RealDataset(
+    #         os.path.join(data_dir, '{}-val'.format(task)), cfg, n_demos=n_val, augment=False
+    #     )
     else:
-        train_ds = RavensDataset(os.path.join(data_dir, '{}-train'.format(task)), cfg, n_demos=n_demos, augment=True)
-        val_ds = RavensDataset(os.path.join(data_dir, '{}-val'.format(task)), cfg, n_demos=n_val, augment=False)
+        train_ds = RavensDataset(
+            os.path.join(data_dir, '{}-train'.format(task)), cfg, n_demos=n_demos, augment=True
+        )
+        val_ds = RavensDataset(
+            os.path.join(data_dir, '{}-val'.format(task)), cfg, n_demos=n_val, augment=False
+        )
 
-    train_loader = DataLoader(train_ds, batch_size=batch_size, collate_fn=collate_fn, num_workers=32)
-    val_loader = DataLoader(val_ds, collate_fn=collate_fn, num_workers=8)
+    train_loader = DataLoader(
+        train_ds, batch_size=batch_size, collate_fn=collate_fn, num_workers=32
+    )
+    val_loader = DataLoader(
+        val_ds, collate_fn=collate_fn, num_workers=8
+    )
 
     # Initialize agent
     agent = agents.names[agent_type](name, cfg, train_loader, val_loader)

@@ -19,6 +19,8 @@ from omegaconf import OmegaConf
 
 import os
 import torch
+import torchvision
+from collections import defaultdict
 
 
 # -----------------------------------------------------------------------------
@@ -335,6 +337,9 @@ def preprocess(img, dist='transporter'):
     if dist == 'clip':
         color_mean = clip_color_mean
         color_std = clip_color_std
+    elif dist == 'mdetr':
+        color_mean = [0.485, 0.456, 0.406]
+        color_std = [0.229, 0.224, 0.225]
     elif dist == 'franka':
         color_mean = franka_color_mean
         color_std = franka_color_std
@@ -376,6 +381,10 @@ def preprocess(img, dist='transporter'):
     #           np.mean(img[:,3,:,:].detach().cpu().numpy()))
 
     return img
+
+
+def map_kit_scale(scale):
+    return (scale[0] / 10, scale[1] / 10, scale[2] / 10)
 
 
 def deprocess(img):
@@ -489,13 +498,15 @@ def q_mult(q1, q2):
     z = w1 * z2 + z1 * w2 + x1 * y2 - y1 * x2
     return (w, x, y, z)
 
+
 def perturb(input_image, pixels, theta_sigma=60, add_noise=False):
     """Data augmentation on images."""
     image_size = input_image.shape[:2]
 
     # Compute random rigid transform.
     while True:
-        theta, trans, pivot = get_random_image_transform_params(image_size, theta_sigma=theta_sigma)
+        theta, trans, pivot = get_random_image_transform_params(image_size,
+                                                                theta_sigma=theta_sigma)
         transform = get_image_transform(theta, trans, pivot)
         transform_params = theta, trans, pivot
 
@@ -531,8 +542,8 @@ def perturb(input_image, pixels, theta_sigma=60, add_noise=False):
         flags=cv2.INTER_LINEAR)
 
     # Apply noise
-    color = np.int32(input_image[:,:,:3])
-    depth = np.float32(input_image[:,:,3:])
+    color = np.int32(input_image[:, :, :3])
+    depth = np.float32(input_image[:, :, 3:])
 
     if add_noise:
         color += np.int32(np.random.normal(0, 3, image_size + (3,)))
@@ -542,6 +553,8 @@ def perturb(input_image, pixels, theta_sigma=60, add_noise=False):
 
     input_image = np.concatenate((color, depth), axis=2)
 
+    # length of 5
+    # transform_params = np.array([theta, trans[0], trans[1], pivot[0], pivot[1]])
     return input_image, new_pixels, new_rounded_pixels, transform_params
 
 
@@ -550,6 +563,7 @@ def apply_perturbation(input_image, transform_params):
     image_size = input_image.shape[:2]
 
     # Apply rigid transform to image and pixel labels.
+    # theta, trans, pivot = transform_params[0], transform_params[1:3], transform_params[3:5]
     theta, trans, pivot = transform_params
     transform = get_image_transform(theta, trans, pivot)
 
@@ -562,6 +576,7 @@ def apply_perturbation(input_image, transform_params):
 
 class ImageRotator:
     """Rotate for n rotations."""
+
     # Reference: https://kornia.readthedocs.io/en/latest/tutorials/warp_affine.html?highlight=rotate
 
     def __init__(self, n_rotations):
@@ -571,6 +586,41 @@ class ImageRotator:
             self.angles.append(theta)
 
     def __call__(self, x_list, pivot_list, reverse=False):
+        # rot_x_list = []
+        # for i, angle in enumerate(self.angles):
+        #     x = x_list[i]  # .unsqueeze(0)
+        #     # create transformation (rotation)
+        #     size = len(x)
+        #     alpha = angle if not reverse else (-1.0 * angle)  # in degrees
+        #     angle = torch.ones(size) * alpha
+        #
+        #     # define the rotation center
+        #     if type(pivot_list) is not torch.Tensor:
+        #         center = torch.FloatTensor(pivot_list)[..., [1, 0]]
+        #         center = center.view(1, -1).repeat((size, 1))
+        #     else:
+        #         center = pivot_list[..., [1, 0]].view(1, -1).clone().to(angle.device)
+        #     # center: torch.tensor = torch.ones(size, 2)
+        #     # center[..., 0] = int(pivot[1])
+        #     # center[..., 1] = int(pivot[0])
+        #
+        #     # define the scale factor
+        #     scale = torch.ones(size, 2)
+        #
+        #     # # compute the transformation matrix
+        #     M = kornia.geometry.get_rotation_matrix2d(center, angle, scale)
+        #     # x_warped = torchvision.transforms.functional.affine(x.float(), scale=1.,
+        #     #             center=[int(pivot[1]),int(pivot[0])],
+        #     #             angle=alpha, translate=[0,0], shear=0,
+        #     #             interpolation= torchvision.transforms.InterpolationMode.BILINEAR)
+        #
+        #     # apply the transformation to original image
+        #     # M = M.repeat(len(x), 1, 1)
+        #     _, _, h, w = x.shape
+        #     x_warped = kornia.geometry.transform.warp_affine(x.float(), M.to(x.device),
+        #                                                      dsize=(h, w))
+        #     x_warped = x_warped
+        #     rot_x_list.append(x_warped)
         assert len(x_list) == len(self.angles)
         B = x_list[0].shape[0]
         assert all([x.shape[0] == B for x in x_list])
@@ -582,7 +632,7 @@ class ImageRotator:
         for i, angle in enumerate(self.angles):
             x = x_list[i]  # B, C, H, W
             pivot = pivot_list[i]  # B, 2
-            
+
             # create transformation (rotation)
             alpha: float = angle if not reverse else (-1.0 * angle)  # in degrees
             angle: torch.tensor = torch.ones(B).to(x.device) * alpha
@@ -605,15 +655,423 @@ class ImageRotator:
         return rot_x_list
 
 
+# KD Tree Utils
+# Construct K-D Tree to roughly estimate how many objects can fit inside the box.
+class TreeNode:
+
+    def __init__(self, parent, children, bbox):
+        self.parent = parent
+        self.children = children
+        self.bbox = bbox  # min x, min y, min z, max x, max y, max z
+
+
+def KDTree(node, min_object_dim, margin, bboxes):
+    size = node.bbox[3:] - node.bbox[:3]
+
+    # Choose which axis to split.
+    split = size > 2 * min_object_dim
+    if np.sum(split) == 0:
+        bboxes.append(node.bbox)
+        return
+    split = np.float32(split) / np.sum(split)
+    split_axis = np.random.choice(range(len(split)), 1, p=split)[0]
+
+    # Split along chosen axis and create 2 children
+    cut_ind = np.random.rand() * \
+              (size[split_axis] - 2 * min_object_dim) + \
+              node.bbox[split_axis] + min_object_dim
+    child1_bbox = node.bbox.copy()
+    child1_bbox[3 + split_axis] = cut_ind - margin / 2.
+    child2_bbox = node.bbox.copy()
+    child2_bbox[split_axis] = cut_ind + margin / 2.
+    node.children = [
+        TreeNode(node, [], bbox=child1_bbox),
+        TreeNode(node, [], bbox=child2_bbox)
+    ]
+    KDTree(node.children[0], min_object_dim, margin, bboxes)
+    KDTree(node.children[1], min_object_dim, margin, bboxes)
+
+
+# -----------------------------------------------------------------------------
+# Shape Name UTILS
+# -----------------------------------------------------------------------------
+google_seen_obj_shapes = {
+    'train': [
+        'alarm clock',
+        'android toy',
+        'black boot with leopard print',
+        'black fedora',
+        'black razer mouse',
+        'black sandal',
+        'black shoe with orange stripes',
+        'bull figure',
+        'butterfinger chocolate',
+        'c clamp',
+        'can opener',
+        'crayon box',
+        'dog statue',
+        'frypan',
+        'green and white striped towel',
+        'grey soccer shoe with cleats',
+        'hard drive',
+        'honey dipper',
+        'magnifying glass',
+        'mario figure',
+        'nintendo 3ds',
+        'nintendo cartridge',
+        'office depot box',
+        'orca plush toy',
+        'pepsi gold caffeine free box',
+        'pepsi wild cherry box',
+        'porcelain cup',
+        'purple tape',
+        'red and white flashlight',
+        'rhino figure',
+        'rocket racoon figure',
+        'scissors',
+        'silver tape',
+        'spatula with purple head',
+        'spiderman figure',
+        'tablet',
+        'toy school bus',
+    ],
+    'val': [
+        'ball puzzle',
+        'black and blue sneakers',
+        'black shoe with green stripes',
+        'brown fedora',
+        'dinosaur figure',
+        'hammer',
+        'light brown boot with golden laces',
+        'lion figure',
+        'pepsi max box',
+        'pepsi next box',
+        'porcelain salad plate',
+        'porcelain spoon',
+        'red and white striped towel',
+        'red cup',
+        'screwdriver',
+        'toy train',
+        'unicorn toy',
+        'white razer mouse',
+        'yoshi figure'
+    ],
+    'test': [
+        'ball puzzle',
+        'black and blue sneakers',
+        'black shoe with green stripes',
+        'brown fedora',
+        'dinosaur figure',
+        'hammer',
+        'light brown boot with golden laces',
+        'lion figure',
+        'pepsi max box',
+        'pepsi next box',
+        'porcelain salad plate',
+        'porcelain spoon',
+        'red and white striped towel',
+        'red cup',
+        'screwdriver',
+        'toy train',
+        'unicorn toy',
+        'white razer mouse',
+        'yoshi figure'
+    ],
+}
+
+google_unseen_obj_shapes = {
+    'train': [
+        'alarm clock',
+        'android toy',
+        'black boot with leopard print',
+        'black fedora',
+        'black razer mouse',
+        'black sandal',
+        'black shoe with orange stripes',
+        'bull figure',
+        'butterfinger chocolate',
+        'c clamp',
+        'can opener',
+        'crayon box',
+        'dog statue',
+        'frypan',
+        'green and white striped towel',
+        'grey soccer shoe with cleats',
+        'hard drive',
+        'honey dipper',
+        'magnifying glass',
+        'mario figure',
+        'nintendo 3ds',
+        'nintendo cartridge',
+        'office depot box',
+        'orca plush toy',
+        'pepsi gold caffeine free box',
+        'pepsi wild cherry box',
+        'porcelain cup',
+        'purple tape',
+        'red and white flashlight',
+        'rhino figure',
+        'rocket racoon figure',
+        'scissors',
+        'silver tape',
+        'spatula with purple head',
+        'spiderman figure',
+        'tablet',
+        'toy school bus',
+    ],
+    'val': [
+        'ball puzzle',
+        'black and blue sneakers',
+        'black shoe with green stripes',
+        'brown fedora',
+        'dinosaur figure',
+        'hammer',
+        'light brown boot with golden laces',
+        'lion figure',
+        'pepsi max box',
+        'pepsi next box',
+        'porcelain salad plate',
+        'porcelain spoon',
+        'red and white striped towel',
+        'red cup',
+        'screwdriver',
+        'toy train',
+        'unicorn toy',
+        'white razer mouse',
+        'yoshi figure'
+    ],
+    'test': [
+        'ball puzzle',
+        'black and blue sneakers',
+        'black shoe with green stripes',
+        'brown fedora',
+        'dinosaur figure',
+        'hammer',
+        'light brown boot with golden laces',
+        'lion figure',
+        'pepsi max box',
+        'pepsi next box',
+        'porcelain salad plate',
+        'porcelain spoon',
+        'red and white striped towel',
+        'red cup',
+        'screwdriver',
+        'toy train',
+        'unicorn toy',
+        'white razer mouse',
+        'yoshi figure'
+    ],
+}
+
+google_all_shapes = {
+    'train': [
+        'alarm clock',
+        'android toy',
+        'ball puzzle',
+        'black and blue sneakers',
+        'black boot with leopard print',
+        'black fedora',
+        'black razer mouse',
+        'black sandal',
+        'black shoe with green stripes',
+        'black shoe with orange stripes',
+        'brown fedora',
+        'bull figure',
+        'butterfinger chocolate',
+        'c clamp',
+        'can opener',
+        'crayon box',
+        'dinosaur figure',
+        'dog statue',
+        'frypan',
+        'green and white striped towel',
+        'grey soccer shoe with cleats',
+        'hammer',
+        'hard drive',
+        'honey dipper',
+        'light brown boot with golden laces',
+        'lion figure',
+        'magnifying glass',
+        'mario figure',
+        'nintendo 3ds',
+        'nintendo cartridge',
+        'office depot box',
+        'orca plush toy',
+        'pepsi gold caffeine free box',
+        'pepsi max box',
+        'pepsi next box',
+        'pepsi wild cherry box',
+        'porcelain cup',
+        'porcelain salad plate',
+        'porcelain spoon',
+        'purple tape',
+        'red and white flashlight',
+        'red and white striped towel',
+        'red cup',
+        'rhino figure',
+        'rocket racoon figure',
+        'scissors',
+        'screwdriver',
+        'silver tape',
+        'spatula with purple head',
+        'spiderman figure',
+        'tablet',
+        'toy school bus',
+        'toy train',
+        'unicorn toy',
+        'white razer mouse',
+        'yoshi figure',
+    ],
+    'val': [
+        'alarm clock',
+        'android toy',
+        'ball puzzle',
+        'black and blue sneakers',
+        'black boot with leopard print',
+        'black fedora',
+        'black razer mouse',
+        'black sandal',
+        'black shoe with green stripes',
+        'black shoe with orange stripes',
+        'brown fedora',
+        'bull figure',
+        'butterfinger chocolate',
+        'c clamp',
+        'can opener',
+        'crayon box',
+        'dinosaur figure',
+        'dog statue',
+        'frypan',
+        'green and white striped towel',
+        'grey soccer shoe with cleats',
+        'hammer',
+        'hard drive',
+        'honey dipper',
+        'light brown boot with golden laces',
+        'lion figure',
+        'magnifying glass',
+        'mario figure',
+        'nintendo 3ds',
+        'nintendo cartridge',
+        'office depot box',
+        'orca plush toy',
+        'pepsi gold caffeine free box',
+        'pepsi max box',
+        'pepsi next box',
+        'pepsi wild cherry box',
+        'porcelain cup',
+        'porcelain salad plate',
+        'porcelain spoon',
+        'purple tape',
+        'red and white flashlight',
+        'red and white striped towel',
+        'red cup',
+        'rhino figure',
+        'rocket racoon figure',
+        'scissors',
+        'screwdriver',
+        'silver tape',
+        'spatula with purple head',
+        'spiderman figure',
+        'tablet',
+        'toy school bus',
+        'toy train',
+        'unicorn toy',
+        'white razer mouse',
+        'yoshi figure',
+    ],
+    'test': [
+        'alarm clock',
+        'android toy',
+        'ball puzzle',
+        'black and blue sneakers',
+        'black boot with leopard print',
+        'black fedora',
+        'black razer mouse',
+        'black sandal',
+        'black shoe with green stripes',
+        'black shoe with orange stripes',
+        'brown fedora',
+        'bull figure',
+        'butterfinger chocolate',
+        'c clamp',
+        'can opener',
+        'crayon box',
+        'dinosaur figure',
+        'dog statue',
+        'frypan',
+        'green and white striped towel',
+        'grey soccer shoe with cleats',
+        'hammer',
+        'hard drive',
+        'honey dipper',
+        'light brown boot with golden laces',
+        'lion figure',
+        'magnifying glass',
+        'mario figure',
+        'nintendo 3ds',
+        'nintendo cartridge',
+        'office depot box',
+        'orca plush toy',
+        'pepsi gold caffeine free box',
+        'pepsi max box',
+        'pepsi next box',
+        'pepsi wild cherry box',
+        'porcelain cup',
+        'porcelain salad plate',
+        'porcelain spoon',
+        'purple tape',
+        'red and white flashlight',
+        'red and white striped towel',
+        'red cup',
+        'rhino figure',
+        'rocket racoon figure',
+        'scissors',
+        'screwdriver',
+        'silver tape',
+        'spatula with purple head',
+        'spiderman figure',
+        'tablet',
+        'toy school bus',
+        'toy train',
+        'unicorn toy',
+        'white razer mouse',
+        'yoshi figure',
+    ],
+}
+assembling_kit_shapes = {
+    0: "letter R shape",
+    1: "letter A shape",
+    2: "triangle",
+    3: "square",
+    4: "plus",
+    5: "letter T shape",
+    6: "diamond",
+    7: "pentagon",
+    8: "rectangle",
+    9: "flower",
+    10: "star",
+    11: "circle",
+    12: "letter G shape",
+    13: "letter V shape",
+    14: "letter E shape",
+    15: "letter L shape",
+    16: "ring",
+    17: "hexagon",
+    18: "heart",
+    19: "letter M shape",
+}
+
 # -----------------------------------------------------------------------------
 # COLOR AND PLOT UTILS
 # -----------------------------------------------------------------------------
 
+
 # Colors (Tableau palette).
 COLORS = {
-    'blue': [078.0 / 255.0, 121.0 / 255.0, 167.0 / 255.0],
+    'blue': [78.0 / 255.0, 121.0 / 255.0, 167.0 / 255.0],
     'red': [255.0 / 255.0, 087.0 / 255.0, 089.0 / 255.0],
-    'green': [089.0 / 255.0, 169.0 / 255.0, 079.0 / 255.0],
+    'green': [089.0 / 255.0, 169.0 / 255.0, 078.0 / 255.0],
     'orange': [242.0 / 255.0, 142.0 / 255.0, 043.0 / 255.0],
     'yellow': [237.0 / 255.0, 201.0 / 255.0, 072.0 / 255.0],
     'purple': [176.0 / 255.0, 122.0 / 255.0, 161.0 / 255.0],
@@ -622,10 +1080,56 @@ COLORS = {
     'brown': [156.0 / 255.0, 117.0 / 255.0, 095.0 / 255.0],
     'white': [255.0 / 255.0, 255.0 / 255.0, 255.0 / 255.0],
     'gray': [186.0 / 255.0, 176.0 / 255.0, 172.0 / 255.0],
-}
+    'indigo': [75.0 / 255.0, 0.0 / 255.0, 130.0 / 255.0],
+    'violet': [143.0 / 255.0, 0.0 / 255.0, 255.0 / 255.0],
+    'black': [0.0 / 255.0, 0.0 / 255.0, 0.0 / 255.0],
+    'silver': [192.0 / 255.0, 192.0 / 255.0, 192.0 / 255.0],
+    'gold': [255.0 / 255.0, 215.0 / 255.0, 0.0 / 255.0],
 
-TRAIN_COLORS = ['blue', 'red', 'green', 'yellow', 'brown', 'gray', 'cyan']
-EVAL_COLORS = ['blue', 'red', 'green', 'orange', 'purple', 'pink', 'white']
+}
+COLORS = defaultdict(lambda: [255.0 / 255.0, 0.0, 0.], COLORS)
+
+COLORS_NAMES = list(COLORS.keys())
+TRAIN_COLORS = ['blue', 'red', 'green', 'yellow', 'brown', 'gray', 'cyan', 'indigo', 'silver']
+EVAL_COLORS = ['blue', 'red', 'green', 'orange', 'purple', 'pink', 'white', 'violet', 'gold']
+
+
+def get_colors(mode='train', n_colors=-1, **kwargs):
+    all_color_names = get_colors_names(mode)
+
+    if n_colors == -1:
+        all_color_names = all_color_names
+    else:
+        all_color_names = random.sample(all_color_names, n_colors)
+    return [COLORS[cn] for cn in all_color_names], all_color_names
+
+
+def get_colors_names(mode):
+    if mode == 'test':
+        return EVAL_COLORS
+    else:
+        return TRAIN_COLORS
+
+
+def get_random_color():
+    return get_colors(mode='train', n_colors=1)
+
+
+def solve_hanoi_all(n_disks):
+    # Solve Hanoi sequence with dynamic programming.
+    hanoi_steps = []  # [[object index, from rod, to rod], ...]
+
+    def solve_hanoi(n, t0, t1, t2):
+        if n == 0:
+            hanoi_steps.append([n, t0, t1])
+            return
+        solve_hanoi(n - 1, t0, t2, t1)
+        hanoi_steps.append([n, t0, t1])
+        solve_hanoi(n - 1, t2, t1, t0)
+
+    solve_hanoi(n_disks - 1, 0, 2, 1)
+    return hanoi_steps
+
 
 def plot(fname,  # pylint: disable=dangerous-default-value
          title,

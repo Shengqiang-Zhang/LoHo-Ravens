@@ -26,6 +26,12 @@ class Task:
     def __init__(self):
         self.ee = Suction
         self.mode = 'train'
+        # Set difficulty level to "easy" or "hard", "hard" means colors of blocks
+        # can be not unique.
+        self.task_difficulty_level = "easy"
+        self.input_manipulate_order = False
+        self.print_debug_info = False
+
         self.sixdof = False
         self.primitive = primitives.PickPlace()
         self.oracle_cams = cameras.Oracle.CONFIG
@@ -33,6 +39,8 @@ class Task:
         # Evaluation epsilons (for pose evaluation metric).
         self.pos_eps = 0.01
         self.rot_eps = np.deg2rad(15)
+        self.height_eps = 0.015
+        self.consider_z_in_match = True
 
         # Workspace bounds.
         self.pix_size = 0.003125
@@ -50,7 +58,8 @@ class Task:
         self.seed = 0
 
         self.generate_instruction_for_every_step = False
-        self.step_save_path = "/mounts/work/shengqiang/projects/2023/LoHoRavens/each_step_img_instruction/"
+        self.step_save_path = ("/mounts/work/shengqiang/projects/"
+                               "2023/LoHoRavens/each_step_img_instruction/")
         self.task_name = None
         self.pick_obj_names, self.place_obj_names = [], []
 
@@ -61,8 +70,14 @@ class Task:
         bowl_size = (0.12, 0.12, 0)
         self.x_length = self.bounds[0][1] - self.bounds[0][0]
         self.y_length = self.bounds[1][1] - self.bounds[1][0]
-        height = block_size[2] // 2
-        center_pos = (self.bounds[0][0] + self.x_length / 2, self.bounds[1][0] + self.y_length / 2, height)
+        height = block_size[2] / 2
+        # For measuring whether a block is on the left/right/bottom/top of another block.
+        self.VISIBLE_DIFF = 0.05
+        center_pos = (
+            self.bounds[0][0] + self.x_length / 2,
+            self.bounds[1][0] + self.y_length / 2,
+            height
+        )
         # theta = np.random.rand() * 2 * np.pi
         theta = 0
         rot = utils.eulerXYZ_to_quatXYZW((0, 0, theta))
@@ -155,11 +170,9 @@ class Task:
                     pose = p.getBasePositionAndOrientation(object_id)
                     targets_i = np.argwhere(matches[i, :]).reshape(-1)
                     for j in targets_i:
-                        # print(f"check obj{i} and targ{j}")
-                        if self.is_match(pose, targs[j], symmetry):
-                            # print(f"obj {i} and targ {j} is matched")
-                            # print(pose)
-                            # print(targs[j])
+                        if self.is_match(
+                                pose, targs[j], symmetry, consider_z=self.consider_z_in_match
+                        ):
                             matches[i, :] = 0
                             matches[:, j] = 0
 
@@ -174,18 +187,21 @@ class Task:
                 targets_i = np.argwhere(matches[i, :]).reshape(-1)
                 if len(targets_i) > 0:  # pylint: disable=g-explicit-length-test
                     targets_xyz = np.float32([targs[j][0] for j in targets_i])
-                    dists = np.linalg.norm(
-                        targets_xyz - np.float32(xyz).reshape(1, 3), axis=1)
+                    dists = np.linalg.norm(targets_xyz - np.float32(xyz).reshape(1, 3), axis=1)
                     nn = np.argmin(dists)
-                    nn_dists.append(dists[nn])  # add the nearest target object for each source object
+                    # add the nearest target object for each source object
+                    nn_dists.append(dists[nn])
                     nn_targets.append(targets_i[nn])
 
                 # Handle ignored objects.
                 else:
                     nn_dists.append(0)
                     nn_targets.append(-1)
-            order = np.argsort(nn_dists)[::-1]  # big to small
-            # TODO: change order to the input order rather than distance-based order.
+            if self.input_manipulate_order:
+                # change order to the input order rather than distance-based order.
+                order = np.arange(len(nn_dists))
+            else:
+                order = np.argsort(nn_dists)[::-1]  # big to small
 
             # Filter out matched objects.
             order = [i for i in order if nn_dists[i] > 0]
@@ -210,10 +226,12 @@ class Task:
             if self.generate_instruction_for_every_step:
                 pick_obj_names, place_obj_names = self.pick_obj_names[0], self.place_obj_names[0]
                 step_instruction = "pick up the {pick_obj} and place it on the {place_obj}."
-                step_instruction = step_instruction.format(pick_obj=pick_obj_names[pick_i],
-                                                           place_obj=place_obj_names[nn_targets[pick_i]])
-                instruction_save_name = (f"{self.step_save_path}/{self.task_name}/{self.mode}/{self.seed}/"
-                                         f"{len(self.goals)}_{pick_i}.txt")
+                step_instruction = step_instruction.format(
+                    pick_obj=pick_obj_names[pick_i],
+                    place_obj=place_obj_names[nn_targets[pick_i]])
+                instruction_save_name = (
+                    f"{self.step_save_path}/{self.task_name}/{self.mode}/{self.seed}/"
+                    f"{len(self.goals)}_{pick_i}.txt")
                 if not Path(instruction_save_name).parent.exists():
                     Path(instruction_save_name).parent.mkdir(parents=True, exist_ok=True)
                 with Path(instruction_save_name).open("w") as f:
@@ -221,8 +239,8 @@ class Task:
 
                 # Save an image before execution.
                 color = env.render()
-                img_save_name = (f"{self.step_save_path}/{self.task_name}/{self.mode}/{self.seed}/"
-                                 f"{len(self.goals)}_{pick_i}.png")
+                img_save_name = (f"{self.step_save_path}/{self.task_name}/"
+                                 f"{self.mode}/{self.seed}/{len(self.goals)}_{pick_i}.png")
                 plt.imsave(img_save_name, color)
 
             # Get picking pose.
@@ -235,7 +253,8 @@ class Task:
 
             # Get placing pose.
             targ_pose = targs[nn_targets[pick_i]]  # pylint: disable=undefined-loop-variable
-            obj_pose = p.getBasePositionAndOrientation(objs[pick_i][0])  # pylint: disable=undefined-loop-variable
+            obj_pose = p.getBasePositionAndOrientation(
+                objs[pick_i][0])  # pylint: disable=undefined-loop-variable
             if not self.sixdof:
                 obj_euler = utils.quatXYZW_to_eulerXYZ(obj_pose[1])
                 obj_quat = utils.eulerXYZ_to_quatXYZW((0, 0, obj_euler[2]))
@@ -285,7 +304,9 @@ class Task:
                 targets_i = np.argwhere(matches[i, :]).reshape(-1)
                 for j in targets_i:
                     target_pose = targs[j]
-                    if self.is_match(pose, target_pose, symmetry):
+                    if self.is_match(
+                            pose, target_pose, symmetry, consider_z=self.consider_z_in_match
+                    ):
                         step_reward += max_reward / len(objs)
                         break
 
@@ -304,22 +325,29 @@ class Task:
                     obj_to_zone = utils.multiply(world_to_zone, obj_pose)
                     pts = np.float32(utils.apply(obj_to_zone, pts))
                     if len(zone_size) > 1:
+                        # valid_pts = np.logical_and.reduce([
+                        #     pts[0, :] > -zone_size[0] / 2, pts[0, :] < zone_size[0] / 2,
+                        #     pts[1, :] > -zone_size[1] / 2, pts[1, :] < zone_size[1] / 2,
+                        #     pts[2, :] < self.zone_bounds[2, 1]])
                         valid_pts = np.logical_and.reduce([
-                            pts[0, :] > -zone_size[0] / 2, pts[0, :] < zone_size[0] / 2,
-                            pts[1, :] > -zone_size[1] / 2, pts[1, :] < zone_size[1] / 2,
-                            pts[2, :] < self.zone_bounds[2, 1]])
+                            pts[0, :] >= -zone_size[0] / 2, pts[0, :] <= zone_size[0] / 2,
+                            pts[1, :] >= -zone_size[1] / 2, pts[1, :] <= zone_size[1] / 2,
+                            pts[2, :] <= self.zone_bounds[2, 1]])
 
                     # if zone_idx == matches[obj_idx].argmax():
                     zone_pts += np.sum(np.float32(valid_pts))
                     total_pts += pts.shape[1]
+                    if self.print_debug_info:
+                        # print(f"------------------zone_idx: {zone_idx}----------------------")
+                        # print(f"pts: {pts}, valid_pts: {valid_pts}")
+                        print(f"zone_pts: {zone_pts}, total_pts: {total_pts}")
             step_reward = max_reward * (zone_pts / total_pts)
-
         # Get cumulative rewards and return delta.
         reward = self.progress + step_reward - self._rewards
         self._rewards = self.progress + step_reward
 
         # Move to next goal step if current goal step is complete.
-        if np.abs(max_reward - step_reward) < 0.01:
+        if np.abs(max_reward - step_reward) < 0.001:
             self.progress += max_reward  # Update task progress.
             self.goals.pop(0)
             if len(self.lang_goals) > 0:
@@ -349,7 +377,9 @@ class Task:
         # if hasattr(self, 'goal'):
         # goal_done = len(self.goal['steps']) == 0  # pylint:
         # disable=g-explicit-length-test
-        return (len(self.goals) == 0) or (self._rewards > 0.99)  # pylint: disable=g-explicit-length-test
+        return (
+                (len(self.goals) == 0) or (self._rewards >= 0.98)
+        )  # pylint: disable=g-explicit-length-test
         # return zone_done or defs_done or goal_done
 
     # -------------------------------------------------------------------------
@@ -372,6 +402,14 @@ class Task:
             diff_rot = np.abs(rot0 - rot1) % symmetry
             if diff_rot > (symmetry / 2):
                 diff_rot = symmetry - diff_rot
+
+        if self.print_debug_info:
+            print(f"real pose: {[round(i, 2) for i in pose0[0]]}, "
+                  f"target pose: {[round(i, 2) for i in pose1[0]]}, ")
+        if consider_z:
+            diff_height = np.abs(np.float32(pose0[0][2]) - np.float32(pose1[0][2]))
+            return (dist_pos < self.pos_eps) and (
+                    diff_rot < self.rot_eps) and (diff_height < self.height_eps)
 
         return (dist_pos < self.pos_eps) and (diff_rot < self.rot_eps)
 
