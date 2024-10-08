@@ -1080,18 +1080,21 @@ COLORS = {
     'brown': [156.0 / 255.0, 117.0 / 255.0, 095.0 / 255.0],
     'white': [255.0 / 255.0, 255.0 / 255.0, 255.0 / 255.0],
     'gray': [186.0 / 255.0, 176.0 / 255.0, 172.0 / 255.0],
-    'indigo': [75.0 / 255.0, 0.0 / 255.0, 130.0 / 255.0],
-    'violet': [143.0 / 255.0, 0.0 / 255.0, 255.0 / 255.0],
-    'black': [0.0 / 255.0, 0.0 / 255.0, 0.0 / 255.0],
-    'silver': [192.0 / 255.0, 192.0 / 255.0, 192.0 / 255.0],
-    'gold': [255.0 / 255.0, 215.0 / 255.0, 0.0 / 255.0],
+
+    # 'indigo': [75.0 / 255.0, 0.0 / 255.0, 130.0 / 255.0],
+    # 'violet': [143.0 / 255.0, 0.0 / 255.0, 255.0 / 255.0],
+    # 'black': [0.0 / 255.0, 0.0 / 255.0, 0.0 / 255.0],
+    # 'silver': [192.0 / 255.0, 192.0 / 255.0, 192.0 / 255.0],
+    # 'gold': [255.0 / 255.0, 215.0 / 255.0, 0.0 / 255.0],
 
 }
 COLORS = defaultdict(lambda: [255.0 / 255.0, 0.0, 0.], COLORS)
 
 COLORS_NAMES = list(COLORS.keys())
-TRAIN_COLORS = ['blue', 'red', 'green', 'yellow', 'brown', 'gray', 'cyan', 'indigo', 'silver']
-EVAL_COLORS = ['blue', 'red', 'green', 'orange', 'purple', 'pink', 'white', 'violet', 'gold']
+# TRAIN_COLORS = ['blue', 'red', 'green', 'yellow', 'brown', 'gray', 'cyan', 'indigo', 'silver']
+# EVAL_COLORS = ['blue', 'red', 'green', 'orange', 'purple', 'pink', 'white', 'violet', 'gold']
+TRAIN_COLORS = ['blue', 'red', 'green', 'yellow', 'brown', 'gray', 'cyan',]
+EVAL_COLORS = ['blue', 'red', 'green', 'orange', 'purple', 'pink', 'white',]
 
 
 def get_colors(mode='train', n_colors=-1, **kwargs):

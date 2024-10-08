@@ -13,14 +13,15 @@ class PutEvenBlockInSameColorZone(Task):
         super().__init__()
         self.max_steps = 10
         self.pos_eps = 0.05
-        self.lang_template = "put the blocks of an even number in the zone " \
+        self.lang_template = "Put the blocks of an even number in the zone " \
                              "with the matching color."
-        self.task_completed_desc = "done placing blocks in the zone."
+        self.task_completed_desc = "Done placing blocks in the zone."
 
     def reset(self, env):
         super().reset(env)
         n_colors = np.random.randint(2, 4)
         n_blocks = np.random.randint(n_colors + 1, min(4 * n_colors, 10))
+        # Make sure not all the types of blocks have an odd number of pieces.
         while (n_blocks % n_colors == 0) and (n_blocks // n_colors % 2 == 1):
             n_blocks = np.random.randint(n_colors + 1, min(4 * n_colors, 10))
         # n_colors = 3

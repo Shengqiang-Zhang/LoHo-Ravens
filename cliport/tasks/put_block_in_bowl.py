@@ -1,11 +1,12 @@
 """Put Blocks in Bowl Task."""
 
+import random
+
 import numpy as np
+import pybullet as p
+
 from cliport.tasks.task import Task
 from cliport.utils import utils
-
-import random
-import pybullet as p
 
 
 class PutBlockInBowlUnseenColors(Task):
@@ -922,7 +923,7 @@ class PutHiddenBlocksInTwoLayerTowersIntoMatchingBowls(PutBlockIntoBowl):
         super().__init__()
         self.pos_eps = 0.05
         self.lang_template = ("put all the hidden blocks in the "
-                              "two-layer stacked blocks into the bowls with matching colors.")
+                              "two-layer stacked towers into the bowls with matching colors.")
         self.task_completed_desc = "done placing the block in bowls."
         self.seed = 0
 
@@ -1082,8 +1083,8 @@ class PutHiddenBlocksInThreeLayerTowersIntoMatchingBowls(PutBlockIntoBowl):
         super().__init__()
         self.pos_eps = 0.05
         self.lang_template = ("put all the hidden blocks in the "
-                              "three-layer stacked blocks into the bowls with matching colors.")
-        self.task_completed_desc = "done placing the block in bowls."
+                              "three-layer stacked towers into the bowls with matching colors.")
+        self.task_completed_desc = "done placing the blocks in bowls."
         self.seed = 0
         self.n_tower_layers = None
 
@@ -1095,13 +1096,13 @@ class PutHiddenBlocksInThreeLayerTowersIntoMatchingBowls(PutBlockIntoBowl):
         self.n_tower_layers = 3
 
         # n_bowls = np.random.randint(3, 5)
-        n_blocks = np.random.randint(6, 10)
+        n_blocks = np.random.randint(6, 8)
         n_bowls = np.random.randint(n_blocks // self.n_tower_layers,
                                     n_blocks // (self.n_tower_layers - 1) + 1)
         self.max_steps = n_blocks + 2
 
         all_color_names = self.get_colors()
-        selected_color_names = list(np.random.choice(all_color_names, n_blocks, replace=False))
+        selected_color_names = np.random.choice(all_color_names, n_blocks, replace=False).tolist()
 
         colors = [utils.COLORS[cn] for cn in selected_color_names]
 
@@ -1135,9 +1136,13 @@ class PutHiddenBlocksInThreeLayerTowersIntoMatchingBowls(PutBlockIntoBowl):
             if i % self.n_tower_layers != 0:
                 pos, rot = bottom_block_pose
                 block_pose = (
-                    (pos[0], pos[1],
-                     self.smaller_block_size[2] +
-                     self.bigger_block_size[2] * (0.5 + (i % self.n_tower_layers) - 1)),
+                    (
+                        pos[0],
+                        pos[1],
+                        self.smaller_block_size[2]
+                        +
+                        self.bigger_block_size[2] * (0.5 + (i % self.n_tower_layers) - 1)
+                    ),
                     rot
                 )
                 block_id = env.add_object(self.bigger_block_urdf, block_pose)
@@ -1247,10 +1252,11 @@ class PutHiddenBlocksInPyramidIntoMatchingBowls(PutBlockIntoBowl):
         self.consider_z_in_match = False
 
         n_bowls = np.random.randint(3, 6)
-        n_blocks = np.random.randint(6, 9)
+        n_blocks = np.random.randint(6, 8)
 
         all_color_names = self.get_colors()
-        block_color_names = random.sample(all_color_names, n_blocks)
+        # block_color_names = random.sample(all_color_names, n_blocks)
+        block_color_names = np.random.choice(all_color_names, n_blocks, replace=False).tolist()
 
         block_colors = [utils.COLORS[cn] for cn in block_color_names]
 
@@ -1270,7 +1276,7 @@ class PutHiddenBlocksInPyramidIntoMatchingBowls(PutBlockIntoBowl):
         self.place_obj_names.append(place_obj_names)
 
         # Add blocks.
-        use_bigger_blocks = np.random.choice([True, False], 1)[0]
+        use_bigger_blocks = np.random.choice([True, False])
         # base_size = (0.05, 0.15, 0.005)
         # base_pose = self.get_random_pose(env, base_size)
         # pyramid_pos = [(0, -0.05, 0.03), (0, 0, 0.03),

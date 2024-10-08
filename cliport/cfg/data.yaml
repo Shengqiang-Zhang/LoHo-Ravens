@@ -14,6 +14,7 @@ shared_memory: False
 task: packing-boxes-pairs-seen-colors
 mode: train # 'train' or 'val' or 'test'
 task_difficulty_level: easy  # "easy" or "hard"
+print_debug_info: False
 n: 1000 # number of demos to generate
 save_data: True  # write episodes to disk
 

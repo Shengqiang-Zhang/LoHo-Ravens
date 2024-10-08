@@ -5,10 +5,10 @@ import os
 import random
 import string
 import tempfile
+from pathlib import Path
 
 import cv2
 import numpy as np
-import torch
 import pybullet as p
 from matplotlib import pyplot as plt
 
@@ -16,8 +16,6 @@ from cliport.tasks import cameras
 from cliport.tasks import primitives
 from cliport.tasks.grippers import Suction
 from cliport.utils import utils
-
-from pathlib import Path
 
 
 class Task:
@@ -342,6 +340,53 @@ class Task:
                         # print(f"pts: {pts}, valid_pts: {valid_pts}")
                         print(f"zone_pts: {zone_pts}, total_pts: {total_pts}")
             step_reward = max_reward * (zone_pts / total_pts)
+        elif metric == "zone_with_z_match":
+            zone_pts, total_pts = 0, 0
+            obj_pts, zones = params
+            assert len(obj_pts) == len(objs), "sizes of obj_pts and objs don't match."
+            for zone_idx, (zone_pose, zone_size) in enumerate(zones):
+                # Count valid points in zone.
+                for i, obj_id in enumerate(obj_pts):
+                    # Check if the z pose matches with the target's.
+                    z_match = False
+                    obj_pose = p.getBasePositionAndOrientation(obj_id)
+                    targets_i = np.argwhere(matches[i, :]).reshape(-1)
+                    for j in targets_i:
+                        target_pose = targs[j]
+                        if self.is_z_match(obj_pose, target_pose):
+                            z_match = True
+                            break
+
+                    if not z_match:  # z_match is the condition for further calculating valid pts.
+                        continue
+                    # Calculate valid pts.
+                    pts = obj_pts[obj_id]
+                    obj_pose = p.getBasePositionAndOrientation(obj_id)
+                    # print("zone_pose", zone_pose)
+                    world_to_zone = utils.invert(zone_pose)
+                    obj_to_zone = utils.multiply(world_to_zone, obj_pose)
+                    pts = np.float32(utils.apply(obj_to_zone, pts))
+                    if len(zone_size) > 1:
+                        # valid_pts = np.logical_and.reduce([
+                        #     pts[0, :] > -zone_size[0] / 2, pts[0, :] < zone_size[0] / 2,
+                        #     pts[1, :] > -zone_size[1] / 2, pts[1, :] < zone_size[1] / 2,
+                        #     pts[2, :] < self.zone_bounds[2, 1]])
+                        valid_pts = np.logical_and.reduce([
+                            pts[0, :] >= -zone_size[0] / 2, pts[0, :] <= zone_size[0] / 2,
+                            pts[1, :] >= -zone_size[1] / 2, pts[1, :] <= zone_size[1] / 2,
+                            pts[2, :] <= self.zone_bounds[2, 1]])
+
+                    # if zone_idx == matches[obj_idx].argmax():
+                    zone_pts += np.sum(np.float32(valid_pts))
+                    total_pts += pts.shape[1]
+                    if self.print_debug_info:
+                        # print(f"------------------zone_idx: {zone_idx}----------------------")
+                        # print(f"pts: {pts}, valid_pts: {valid_pts}")
+                        print(f"zone_pts: {zone_pts}, total_pts: {total_pts}")
+            step_reward = max_reward * (zone_pts / total_pts)
+        else:
+            raise ValueError("Metric {} is not supported.".format(metric))
+
         # Get cumulative rewards and return delta.
         reward = self.progress + step_reward - self._rewards
         self._rewards = self.progress + step_reward
@@ -412,6 +457,11 @@ class Task:
                     diff_rot < self.rot_eps) and (diff_height < self.height_eps)
 
         return (dist_pos < self.pos_eps) and (diff_rot < self.rot_eps)
+
+    def is_z_match(self, pose0, pose1):
+        """Check if the pose0's z pose matches with the pose1's z pose."""
+        diff_height = np.abs(np.float32(pose0[0][2]) - np.float32(pose1[0][2]))
+        return diff_height < self.height_eps
 
     def get_true_image(self, env):
         """Get RGB-D orthographic heightmaps and segmentation masks."""

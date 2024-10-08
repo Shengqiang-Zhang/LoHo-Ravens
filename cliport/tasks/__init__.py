@@ -78,6 +78,7 @@ from cliport.tasks.stack_blocks import (
 
 from cliport.tasks.move_blocks import (
     MoveBlocksBetweenAbsolutePositions,
+    MoveBlocksBetweenAbsolutePositionsByColor,
     MoveBlocksBetweenAbsolutePositionsBySize,
     MoveBlocksBetweenAbsolutePositionsBySizeAndColor,
 )
@@ -178,6 +179,7 @@ names = {
     'pick-and-place-primitive-with-absolute-position': PickAndPlacePrimitiveWithAbsolutePosition,
     'put-even-blocks-in-same-color-zone': PutEvenBlockInSameColorZone,
     'move-blocks-between-absolute-positions': MoveBlocksBetweenAbsolutePositions,
+    'move-blocks-between-absolute-positions-by-color': MoveBlocksBetweenAbsolutePositionsByColor,
     'move-blocks-between-absolute-positions-by-size': MoveBlocksBetweenAbsolutePositionsBySize,
     'move-blocks-between-absolute-positions-by-size-and-color':
         MoveBlocksBetweenAbsolutePositionsBySizeAndColor,

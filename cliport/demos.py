@@ -23,6 +23,7 @@ def main(cfg):
     task = tasks.names[cfg['task']]()
     task.mode = cfg['mode']
     task.task_difficulty_level = cfg['task_difficulty_level']
+    task.print_debug_info = cfg['print_debug_info']
     record = cfg['record']['save_video']
     save_data = cfg['save_data']
 

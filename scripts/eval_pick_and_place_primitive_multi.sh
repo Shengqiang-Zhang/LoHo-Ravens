@@ -2,6 +2,8 @@
 MODEL_DIR=${1}
 CKPT=${2}
 mode=${3}
+EVAL_TASK=${4}
+
 # python cliport/eval.py eval_task=pick-and-place-primitive \
 #                        agent=cliport \
 #                        mode=val \
@@ -32,17 +34,18 @@ echo "---------------- Evaluate on the ${mode} set -----------------"
 
 # multi
 python cliport/eval.py model_task=lohoravens-pick-and-place-primitive \
-    eval_task=lohoravens-pick-and-place-primitive \
+    eval_task=${EVAL_TASK} \
     agent=cliport \
     mode=${mode} \
     n_demos=200 \
-    train_demos=1000 \
+    train_demos=20000 \
     checkpoint_type=${CKPT} \
     type=multi \
     model_dir=${MODEL_DIR} \
     exp_folder=exps \
-    data_dir=/mounts/work/shengqiang/projects/2023/LoHoRavens/dataset/ \
+    data_dir=/mounts/work/shengqiang/projects/2023/LoHoRavens/data_v2/ \
     record.save_video=False \
+    # eval_task=lohoravens-pick-and-place-primitive \
 
 # single
 # python cliport/eval.py model_task=pick-and-place-primitive \

@@ -1,14 +1,13 @@
 """Stacking Block Pyramid Sequence task."""
 
 import random
-from typing import List
 
 import numpy as np
 import pybullet as p
 
+from cliport.tasks.color_reasoning import COLOR_CATEGORY_NAMES
 from cliport.tasks.task import Task
 from cliport.utils import utils
-from cliport.tasks.color_reasoning import COLOR_CATEGORY_NAMES
 
 
 class StackBlockPyramidSeqUnseenColors(Task):
@@ -250,81 +249,20 @@ class StackBlocks(Task):
         return utils.TRAIN_COLORS if self.mode == 'train' else utils.EVAL_COLORS
 
 
-class StackAllBlock(Task):
-    """Stacking ALL Blocks without step-by-step instruction base class.
-    There is just a high-level instruction: Stack all blocks. """
-
-    # TODO: discarded.
-
-    def __init__(self):
-        super().__init__()
-        self.n_blocks = random.randint(2, 5)
-        self.max_steps = self.n_blocks + 2
-
-        self.lang_template = "stack all the blocks"
-        self.task_completed_desc = "done stacking block."
-
-    def reset(self, env):
-        super().reset(env)
-
-        # Add base.
-        base_size = (0.05, 0.15, 0.005)
-        base_urdf = 'stacking/stand.urdf'
-        base_pose = self.get_random_pose(env, base_size)
-        env.add_object(base_urdf, base_pose, 'fixed')
-
-        # Block colors.
-        color_names = self.get_colors()
-
-        # Shuffle the block colors.
-        random.shuffle(color_names)
-        colors = [utils.COLORS[cn] for cn in color_names]
-
-        # Add blocks.
-        objs = []
-        # sym = np.pi / 2
-        block_size = (0.04, 0.04, 0.04)
-        block_urdf = 'stacking/block.urdf'
-        for i in range(self.n_blocks):
-            block_pose = self.get_random_pose(env, block_size)
-            block_id = env.add_object(block_urdf, block_pose)
-            p.changeVisualShape(block_id, -1, rgbaColor=colors[i] + [1])
-            objs.append((block_id, (np.pi / 2, None)))
-
-        self.scene_description = f"On the table, there are {self.n_blocks} blocks. " \
-                                 f"Their colors are {color_names[:self.n_blocks]}. "
-
-        # Associate placement locations for goals.
-        # place_pos = [(0, -0.05, 0.03), (0, 0, 0.03),
-        #              (0, 0.05, 0.03), (0, -0.025, 0.08),
-        #              (0, 0.025, 0.08), (0, 0, 0.13)]
-        place_pos = [(0, 0, 0.03 + 0.05 * i) for i in range(self.n_blocks)]
-        # place_pos = [(0, 0, 0.03), (0, 0, 0.08), (0, 0, 0.13)]
-        targs = [(utils.apply(base_pose, i), base_pose[1]) for i in place_pos]
-
-        match_matrix = np.eye(self.n_blocks)
-        # match_matrix = np.ones((self.n_blocks, self.n_blocks))
-        self.goals.append((objs, match_matrix, targs, False, True, 'pose', None, 1))
-        self.lang_goals.append(self.lang_template)
-        # Goal: make bottom row.
-
-    def get_colors(self):
-        return utils.TRAIN_COLORS if self.mode == 'train' else utils.EVAL_COLORS
-
-
 class StackAllBlocksOnAZone(StackBlocks):
     """Stacking ALL Blocks In A Zone without step-by-step instruction base class.
     There is just a high-level instruction: Stack all blocks in a zone. """
 
     def __init__(self):
         super().__init__()
-        self.lang_template = "stack all the blocks on the {zone_color} zone."
-        self.task_completed_desc = "done stacking block."
+        self.zone_color_name = None
+        self.lang_template = "Stack all the blocks on the {zone_color} zone."
+        self.task_completed_desc = "Done stacking blocks."
 
     def reset(self, env):
         super().reset(env)
         self.print_debug_info = False
-        self.n_blocks = np.random.randint(2, 6)
+        self.n_blocks = np.random.randint(3, 6)
         self.block_color_names = np.random.choice(
             a=self.all_color_names, size=self.n_blocks, replace=False
         )
@@ -335,15 +273,17 @@ class StackAllBlocksOnAZone(StackBlocks):
         objs = []
         block_size = (0.04, 0.04, 0.04)
         block_urdf = 'stacking/block.urdf'
+        blocks_pts = {}
         for i in range(self.n_blocks):
             block_pose = self.get_random_pose(env, block_size)
             block_id = env.add_object(block_urdf, block_pose)
             p.changeVisualShape(block_id, -1, rgbaColor=self.block_colors[i] + [1])
             objs.append((block_id, (np.pi / 2, None)))
+            blocks_pts[block_id] = self.get_box_object_points(block_id)
 
         # Add zones.
-        zone_color_name = np.random.choice(a=self.all_color_names, size=1)[0]
-        zone_color = utils.COLORS[zone_color_name]
+        self.zone_color_name = np.random.choice(a=self.all_color_names)
+        zone_color = utils.COLORS[self.zone_color_name]
         zone_size = (0.1, 0.1, 0)
         zone_pose = self.get_random_pose(env, zone_size)
         zone_obj_id = env.add_object('zone/zone.urdf', zone_pose, 'fixed')
@@ -356,67 +296,40 @@ class StackAllBlocksOnAZone(StackBlocks):
             goal_poses.append(((pos[0], pos[1], height), rot))
 
         match_matrix = np.ones((self.n_blocks, self.n_blocks))
-        self.goals.append((objs, match_matrix, goal_poses, False, True, 'pose', None, 1))
-        self.lang_goals.append(self.lang_template.format(zone_color=zone_color_name))
+        self.goals.append(
+            (
+                objs,
+                match_matrix,
+                goal_poses,
+                False,
+                True,
+                'zone_with_z_match',
+                (blocks_pts, [(zone_pose, zone_size)]),
+                1
+            )
+        )
+        self.lang_goals.append(self.lang_template.format(zone_color=self.zone_color_name))
 
         self.scene_description = (f"On the table, there are {self.n_blocks} blocks. "
                                   f"Their colors are {self.block_color_names[:self.n_blocks]}. "
                                   f"There is a zone on the table, "
-                                  f"and its color is {zone_color_name}. ")
+                                  f"and its color is {self.zone_color_name}. ")
 
     def get_colors(self):
         return utils.TRAIN_COLORS if self.mode == 'train' else utils.EVAL_COLORS
 
 
-class StackAllBlocksOnAZoneWithDetails(StackBlocks):
-    """Stacking ALL Blocks In A Zone without step-by-step instruction base class.
+class StackAllBlocksOnAZoneWithDetails(StackAllBlocksOnAZone):
+    """Stacking ALL Blocks In A Zone with step-by-step instruction base class.
     There is just a high-level instruction: Stack all blocks in a zone. """
 
     def __init__(self):
         super().__init__()
         self.lang_template = ("The goal is that stack all the blocks on the {zone_color} zone. "
                               "The step-by-step instructions are: {step_instructions}")
-        self.task_completed_desc = "done stacking block."
 
     def reset(self, env):
         super().reset(env)
-        self.input_manipulate_order = True
-        self.consider_z_in_match = True
-
-        self.print_debug_info = False
-        self.n_blocks = np.random.randint(2, 6)
-        self.block_color_names = np.random.choice(
-            a=self.all_color_names, size=self.n_blocks, replace=False
-        )
-        self.block_colors = [utils.COLORS[cn] for cn in self.block_color_names]
-        self.max_steps = self.n_blocks + 2
-
-        # Add blocks.
-        objs = []
-        block_size = (0.04, 0.04, 0.04)
-        block_urdf = 'stacking/block.urdf'
-        for i in range(self.n_blocks):
-            block_pose = self.get_random_pose(env, block_size)
-            block_id = env.add_object(block_urdf, block_pose)
-            p.changeVisualShape(block_id, -1, rgbaColor=self.block_colors[i] + [1])
-            objs.append((block_id, (np.pi / 2, None)))
-
-        # Add zones.
-        zone_color_name = np.random.choice(a=self.all_color_names, size=1)[0]
-        zone_color = utils.COLORS[zone_color_name]
-        zone_size = (0.1, 0.1, 0)
-        zone_pose = self.get_random_pose(env, zone_size)
-        zone_obj_id = env.add_object('zone/zone.urdf', zone_pose, 'fixed')
-        p.changeVisualShape(zone_obj_id, -1, rgbaColor=zone_color + [1])
-
-        goal_poses = []
-        pos, rot = zone_pose
-        for i in range(self.n_blocks):
-            height = block_size[2] / 2 + block_size[2] * i
-            goal_poses.append(((pos[0], pos[1], height), rot))
-
-        match_matrix = np.ones((self.n_blocks, self.n_blocks))
-        self.goals.append((objs, match_matrix, goal_poses, False, True, 'pose', None, 1))
 
         # Step instructions.
         step_instructions = []
@@ -425,8 +338,10 @@ class StackAllBlocksOnAZoneWithDetails(StackBlocks):
         later_step_instruction_template = ("Pick up the {first_block_color} block "
                                            "and place it on the {second_block_color} block.")
         step_instructions.append(
-            first_step_instruction_template.format(block_color=self.block_color_names[0],
-                                                   zone_color=zone_color_name)
+            first_step_instruction_template.format(
+                block_color=self.block_color_names[0],
+                zone_color=self.zone_color_name
+            )
         )
         for i in range(1, self.n_blocks):
             step_instructions.append(
@@ -437,13 +352,13 @@ class StackAllBlocksOnAZoneWithDetails(StackBlocks):
             )
         step_instructions = " ".join(step_instructions)
 
-        self.lang_goals.append(self.lang_template.format(zone_color=zone_color_name,
+        self.lang_goals.append(self.lang_template.format(zone_color=self.zone_color_name,
                                                          step_instructions=step_instructions))
 
         self.scene_description = (f"On the table, there are {self.n_blocks} blocks. "
                                   f"Their colors are {self.block_color_names[:self.n_blocks]}. "
                                   f"There is a zone on the table, "
-                                  f"and its color is {zone_color_name}. ")
+                                  f"and its color is {self.zone_color_name}. ")
 
     def get_colors(self):
         return utils.TRAIN_COLORS if self.mode == 'train' else utils.EVAL_COLORS
@@ -459,9 +374,9 @@ class StackBlocksOfSameSize(StackBlocks):
         super().__init__()
         self.max_steps = 10
         self.n_bigger_blocks, self.n_smaller_blocks = 0, 0
-        self.lang_template = ("stack blocks of the same size "
+        self.lang_template = ("Stack blocks of the same size "
                               "on the {first_zone} zone and {second_zone} zone respectively.")
-        self.task_completed_desc = "done stacking all the objects"
+        self.task_completed_desc = "Done stacking blocks."
 
     def reset(self, env):
         super().reset(env)
@@ -522,6 +437,18 @@ class StackBlocksOfSameSize(StackBlocks):
                 bigger_blocks + smaller_blocks,
                 match_matrix,
                 bigger_block_goal_poses + smaller_block_goal_poses,
+                False,
+                True,
+                'pose',
+                None,
+                1
+            )
+        )
+        self.goals.append(
+            (
+                bigger_blocks,
+                np.ones((self.n_bigger_blocks, self.n_bigger_blocks)),
+                bigger_block_goal_poses,
                 False,
                 True,
                 'pose',
@@ -670,6 +597,7 @@ class StackBlocksWithAlternateColor(Task):
     def reset(self, env):
         super().reset(env)
         self.n_blocks = np.random.randint(2, 6)
+        self.n_blocks = 5
         self.n_block_colors = 2
         self.max_steps = self.n_blocks + 2
         self.input_manipulate_order = True

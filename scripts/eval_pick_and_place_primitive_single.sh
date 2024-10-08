@@ -45,15 +45,16 @@ echo "---------------- Evaluate on the ${mode} set -----------------"
 #     record.save_video=True \
 
 # single
-python cliport/eval.py model_task=pick-and-place-primitive \
-    eval_task=pick-and-place-primitive \
+python cliport/eval.py model_task=pick-and-place-primitive-with-absolute-position \
+    eval_task=pick-and-place-primitive-with-absolute-position \
     agent=cliport \
     mode=${mode} \
     n_demos=100 \
-    train_demos=20000 \
+    train_demos=2000 \
     checkpoint_type=${CKPT} \
     type=single \
     model_dir=${MODEL_DIR} \
     exp_folder=exps \
-    data_dir=/mounts/work/shengqiang/projects/2023/LoHoRavens/dataset/ \
+    data_dir=/nfs/gdata/shengqiang/cliport/loho-ravens/data_v2/pick-and-place-primitive-2k/ \
+    # data_dir=/mounts/work/shengqiang/projects/2023/LoHoRavens/dataset/ \
     # record.save_video=True \

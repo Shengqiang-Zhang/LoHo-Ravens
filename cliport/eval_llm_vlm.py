@@ -21,7 +21,7 @@ from vlm import load_vlm, get_description_from_vlm
 device = torch.device("cuda") if torch.cuda.is_available() else "cpu"
 
 
-@hydra.main(config_path='./cfg', config_name='eval_reporter')
+@hydra.main(config_path='./cfg', config_name='eval_vlm')
 def main(vcfg):
     # Load train cfg
     tcfg = utils.load_hydra_config(vcfg['train_config'])
@@ -64,8 +64,8 @@ def main(vcfg):
     name = '{}-{}-n{}'.format(eval_task, vcfg['agent'], vcfg['n_demos'])
 
     # Save path for results.
-    json_name = f"multi-results-{mode}.json" if 'multi' in vcfg[
-        'model_path'] else f"results-{mode}-openflamingo.json"
+    json_name = (f"multi-results-{mode}.json" if 'multi' in vcfg['model_path']
+                 else f"results-{mode}-vlm.json")
     save_path = vcfg['save_path']
     print(f"Save path for results: {save_path}")
     if not os.path.exists(save_path):
@@ -83,15 +83,14 @@ def main(vcfg):
 
     # LLM
     use_llm = vcfg["use_llm"]
-    gpt_name_list = ["gpt-3.5-turbo", "chatgpt"]
+    gpt_name_list = ["gpt-3.5-turbo", "chatgpt", "gpt-4"]
     open_source_llm_name_list = ["meta-llama/Meta-Llama-3-8B-Instruct",
                                  "meta-llama/Llama-2-70b-hf",
                                  "upstage/Llama-2-70b-instruct-v2",
                                  "meta-llama/Llama-2-13b-chat-hf",
                                  "meta-llama/Llama-2-7b-chat-hf"]
     llm_name = open_source_llm_name_list[3]
-    OPENAI_API_KEY = "your_openai_key"
-    openai.api_key = OPENAI_API_KEY
+    openai.api_key = vcfg["openai_api_key"]
 
     # Load LLM
     if use_llm:
